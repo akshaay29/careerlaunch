@@ -1,7 +1,8 @@
 name: Migrate and deploy
 
 # Releases only: migrate the prod DB first (AD-13), then deploy api (Render), then web (Vercel).
-# Deploy jobs `needs: migrate`, so a failed migration stops the release.
+# Deploy jobs `needs: migrate`, so a failed migration stops the release. deploy-web waits
+# until the Render deploy of the migrated commit is live.
 on:
   release:
     types: [published]
@@ -22,6 +23,11 @@ env:
 jobs:
   migrate:
     name: alembic upgrade head
+    # Full releases only (no prereleases), or a manual run from main.
+    if: >-
+      (github.event_name == 'release' && !github.event.release.prerelease) ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    environment: production
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -49,23 +55,65 @@ jobs:
       - name: Migrate
         run: uv run --no-dev alembic upgrade head
 
+      - name: Exposed-schema check (AD-1) on prod
+        env:
+          DATABASE_URL: ${{ secrets.MIGRATION_DATABASE_URL }}
+        run: uv run --no-dev python scripts/check_exposed_schema.py
+
   deploy-api:
     name: Deploy api (Render deploy hook)
     needs: migrate
+    environment: production
     runs-on: ubuntu-latest
     env:
       RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+      RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+      RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
     steps:
-      - name: Trigger Render deploy
+      - name: Check secrets
         run: |
-          if [ -z "$RENDER_DEPLOY_HOOK_URL" ]; then
-            echo "::error::RENDER_DEPLOY_HOOK_URL secret is not set"; exit 1
+          for k in RENDER_DEPLOY_HOOK_URL RENDER_API_KEY RENDER_SERVICE_ID; do
+            if [ -z "${!k}" ]; then echo "::error::$k secret is not set"; exit 1; fi
+          done
+
+      - name: Trigger Render deploy of the migrated commit
+        id: hook
+        run: |
+          # The hook URL already carries ?key=...; deploy exactly the commit we migrated.
+          case "$RENDER_DEPLOY_HOOK_URL" in *\?*) sep='&' ;; *) sep='?' ;; esac
+          body="$(curl --fail --silent --show-error -X POST "${RENDER_DEPLOY_HOOK_URL}${sep}ref=${GITHUB_SHA}")"
+          deploy_id="$(printf '%s' "$body" | jq -r '.deploy.id // .id // empty')"
+          if [ -z "$deploy_id" ]; then
+            echo "::error::Render deploy hook returned no deploy id"; exit 1
           fi
-          curl --fail --silent --show-error --output /dev/null -X POST "$RENDER_DEPLOY_HOOK_URL"
+          echo "Render deploy: $deploy_id"
+          echo "deploy_id=$deploy_id" >> "$GITHUB_OUTPUT"
+
+      - name: Wait until the Render deploy is live
+        env:
+          DEPLOY_ID: ${{ steps.hook.outputs.deploy_id }}
+        run: |
+          deadline=$(( $(date +%s) + 900 ))  # ~15 minutes
+          while :; do
+            status="$(curl --fail --silent --show-error \
+              -H "Authorization: Bearer $RENDER_API_KEY" -H "Accept: application/json" \
+              "https://api.render.com/v1/services/${RENDER_SERVICE_ID}/deploys/${DEPLOY_ID}" \
+              | jq -r '.status')"
+            echo "Render deploy $DEPLOY_ID: $status"
+            case "$status" in
+              live) exit 0 ;;
+              *failed|canceled|deactivated) echo "::error::Render deploy ended as $status"; exit 1 ;;
+            esac
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "::error::Timed out waiting for Render deploy $DEPLOY_ID"; exit 1
+            fi
+            sleep 15
+          done
 
   deploy-web:
     name: Deploy web (Vercel)
     needs: [migrate, deploy-api]
+    environment: production
     runs-on: ubuntu-latest
     defaults:
       run:

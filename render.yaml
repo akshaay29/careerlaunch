@@ -10,7 +10,7 @@ services:
     rootDir: api
     autoDeployTrigger: "off"
     buildCommand: pip install uv==0.13.1 && uv sync --frozen --no-dev
-    startCommand: .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers
+    startCommand: .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips='*'
     healthCheckPath: /api/v1/health
     envVars:
       - key: PYTHON_VERSION

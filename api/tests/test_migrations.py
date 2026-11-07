@@ -69,16 +69,36 @@ def test_rls_helper_satisfies_check(sync_conn: psycopg.Connection) -> None:
     assert forced is True
 
 
+_FN = "CREATE FUNCTION {name}() RETURNS int LANGUAGE sql AS 'SELECT 1'"
+
+
 @pytest.mark.parametrize(
-    ("grant", "needle"),
+    ("statements", "needle"),
     [
-        ("GRANT USAGE ON SCHEMA app TO anon", "anon has USAGE on schema app"),
-        ("GRANT SELECT ON app.alembic_version TO authenticated", "authenticated has SELECT"),
-        ("GRANT SELECT ON app.alembic_version TO PUBLIC", "anon has SELECT"),
+        (["GRANT USAGE ON SCHEMA app TO anon"], "anon has USAGE on schema app"),
+        (["GRANT CREATE ON SCHEMA app TO authenticated"], "authenticated has CREATE on schema app"),
+        (["GRANT SELECT ON app.alembic_version TO authenticated"], "authenticated has SELECT"),
+        (["GRANT SELECT ON app.alembic_version TO PUBLIC"], "anon has SELECT"),
+        (
+            ["GRANT SELECT (version_num) ON app.alembic_version TO anon"],
+            "anon has column-level SELECT on app.alembic_version",
+        ),
+        (
+            ["CREATE SEQUENCE app.seq_leak", "GRANT USAGE ON SEQUENCE app.seq_leak TO anon"],
+            "anon has USAGE on sequence app.seq_leak",
+        ),
+        (
+            [_FN.format(name="app.fn_leak"), "GRANT EXECUTE ON FUNCTION app.fn_leak() TO authenticated"],
+            "authenticated has a grant on function app.fn_leak",
+        ),
+        ([_FN.format(name="public.rpc_leak")], "function public.rpc_leak is in an exposed schema"),
     ],
+    ids=["schema-usage", "schema-create", "table", "public-role", "column", "sequence",
+         "function-grant", "public-function"],
 )
-def test_exposed_schema_check_fails_on_grants(
-    sync_conn: psycopg.Connection, grant: str, needle: str
+def test_exposed_schema_check_fails(
+    sync_conn: psycopg.Connection, statements: list[str], needle: str
 ) -> None:
-    sync_conn.execute(grant)
+    for stmt in statements:
+        sync_conn.execute(stmt)
     assert any(needle in v for v in find_violations(sync_conn))

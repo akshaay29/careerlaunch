@@ -12,6 +12,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.core.logging import request_id_var
 
@@ -161,7 +162,41 @@ async def _unhandled_exception(request: Request, exc: Exception) -> JSONResponse
     )
 
 
+class UnhandledErrorMiddleware:
+    """Innermost middleware: turns unhandled exceptions into the 500 problem response.
+
+    Starlette's ServerErrorMiddleware sits OUTSIDE all user middleware, so its responses
+    would miss CORS and x-request-id headers. Catching here keeps them.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        started = False
+
+        async def tracking_send(message: Message) -> None:
+            nonlocal started
+            if message["type"] == "http.response.start":
+                started = True
+            await send(message)
+
+        try:
+            await self.app(scope, receive, tracking_send)
+        except Exception as exc:
+            if started:
+                raise
+            response = await _unhandled_exception(Request(scope, receive), exc)
+            await response(scope, receive, send)
+
+
 def install_error_handlers(app: FastAPI) -> None:
+    """Register every handler. Call BEFORE adding CORS / request-id middleware so the
+    unhandled-error middleware ends up innermost."""
+    app.add_middleware(UnhandledErrorMiddleware)
     app.add_exception_handler(StarletteHTTPException, _http_exception)
     app.add_exception_handler(RequestValidationError, _validation_exception)
     app.add_exception_handler(DomainError, _domain_exception)

@@ -55,6 +55,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         lifespan=_lifespan,
     )
 
+    install_error_handlers(app)  # first => its middleware is innermost
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
@@ -64,8 +65,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         expose_headers=[REQUEST_ID_HEADER],
     )
     app.add_middleware(RequestIdMiddleware)
-
-    install_error_handlers(app)
 
     app.include_router(system_router, prefix=API_V1)
     app.include_router(accounts_router, prefix=API_V1)

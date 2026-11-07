@@ -23,12 +23,20 @@ def _url() -> str:
     return config.attributes.get("database_url") or get_settings().migration_sqlalchemy_url
 
 
+def _include_name(name: str | None, type_: str, _parent_names: object) -> bool:
+    # Autogenerate only ever looks at schema `app` (never auth/storage/public).
+    if type_ == "schema":
+        return name == APP_SCHEMA
+    return True
+
+
 def _configure(connection: Connection | None = None, **kwargs: object) -> None:
     context.configure(
         connection=connection,
         target_metadata=target_metadata,
         version_table_schema=APP_SCHEMA,
         include_schemas=True,
+        include_name=_include_name,
         transaction_per_migration=True,
         **kwargs,
     )

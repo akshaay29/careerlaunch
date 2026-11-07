@@ -60,7 +60,7 @@ npm run dev
 | Command (from `web/`) | Purpose |
 | --- | --- |
 | `npm run gen:api` | Export OpenAPI (`web/openapi.json`) and regenerate `web/src/api/`. **Commit both.** Never hand-edit `src/api/`. |
-| `npm run lint` / `npm run typecheck` / `npm run build` | Same checks as CI |
+| `npm run lint` / `npm run typecheck` (`next typegen && tsc --noEmit`) / `npm run build` | Same checks as CI |
 
 ### Running the tests against plain Postgres (what CI does)
 
@@ -95,9 +95,12 @@ failed migration stops the release. Nothing deploys on push.
    deploys from `web/`, so leave *Root Directory* empty); Git auto-deploy is disabled by
    `web/vercel.json`. Set `NEXT_PUBLIC_API_URL` to the Render URL. Get the org and project
    ids from `web/.vercel/project.json` after `npx vercel link`, and create a token.
-4. **GitHub secrets** — `MIGRATION_DATABASE_URL`, `RENDER_DEPLOY_HOOK_URL`, `VERCEL_TOKEN`,
-   `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`.
-5. Publish a GitHub release to migrate and deploy.
+4. **GitHub `production` environment secrets** — `MIGRATION_DATABASE_URL`,
+   `RENDER_DEPLOY_HOOK_URL`, `RENDER_API_KEY`, `RENDER_SERVICE_ID` (the `srv-...` id),
+   `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`.
+5. Publish a (non-prerelease) GitHub release, or run the workflow manually from `main`, to
+   migrate, run the exposed-schema check on prod, deploy the migrated commit to Render, wait
+   for it to be live, then deploy web.
 
 Every configuration key and where it lives is listed in [`.env.example`](.env.example).
 Secrets come only from env or GitHub secrets; nothing secret is committed.

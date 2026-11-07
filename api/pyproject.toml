@@ -65,3 +65,15 @@ name = "Vendor SDKs only in app.adapters (AD-3)"
 type = "forbidden"
 source_modules = ["app.core", "app.ports", "app.modules", "app.main"]
 forbidden_modules = ["supabase", "apify_client", "googleapiclient", "groq", "brevo"]
+
+[[tool.importlinter.contracts]]
+name = "Modules reach adapters only through ports (AD-3)"
+type = "forbidden"
+source_modules = ["app.modules"]
+forbidden_modules = ["app.adapters"]
+
+[[tool.importlinter.contracts]]
+name = "Adapters never import modules"
+type = "forbidden"
+source_modules = ["app.adapters"]
+forbidden_modules = ["app.modules"]

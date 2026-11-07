@@ -5,5 +5,10 @@ import { defineConfig } from "@hey-api/openapi-ts";
 export default defineConfig({
   input: "./openapi.json",
   output: "src/api",
-  plugins: ["@hey-api/client-fetch", "@hey-api/typescript", "@hey-api/sdk"],
+  plugins: [
+    // createClientConfig() in src/lib/api-client.ts supplies the base URL.
+    { name: "@hey-api/client-fetch", runtimeConfigPath: "./src/lib/api-client" },
+    "@hey-api/typescript",
+    "@hey-api/sdk",
+  ],
 });

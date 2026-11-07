@@ -2,6 +2,8 @@
 
 Exits 1 if:
   * any relation (table, view, sequence, index, ...) exists in ``public`` or ``graphql_public``;
+  * any function/procedure exists there (PostgREST exposes them as RPC), except
+    extension-owned ones and Supabase's own ``graphql_public.graphql`` entrypoint;
   * any table in schema ``app`` does not have row level security enabled;
   * ``anon`` or ``authenticated`` hold any privilege on schema ``app`` or its objects
     (directly, via role membership, or via PUBLIC).
@@ -21,6 +23,8 @@ from app.core.config import get_settings, to_libpq_url  # noqa: E402
 EXPOSED_SCHEMAS = ("public", "graphql_public")
 APP_SCHEMA = "app"
 API_ROLES = ("anon", "authenticated")
+# Platform-managed functions Supabase installs in exposed schemas (owner supabase_admin).
+ALLOWED_EXPOSED_FUNCTIONS = {("graphql_public", "graphql")}
 
 _RELKIND = {
     "r": "table",
@@ -59,6 +63,25 @@ def find_violations(conn: psycopg.Connection) -> list[str]:
         (list(EXPOSED_SCHEMAS),),
     ):
         violations.append(f"{_RELKIND.get(kind, kind)} {nsp}.{rel} is in an exposed schema")
+
+    # 1b. Functions / procedures in exposed schemas (callable as RPC), minus extension members.
+    for nsp, fn, kind in conn.execute(
+        """
+        SELECT n.nspname, p.proname, p.prokind::text
+        FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+        WHERE n.nspname = ANY(%s)
+          AND NOT EXISTS (
+            SELECT 1 FROM pg_depend d
+            WHERE d.classid = 'pg_proc'::regclass AND d.objid = p.oid AND d.deptype = 'e'
+          )
+        ORDER BY 1, 2
+        """,
+        (list(EXPOSED_SCHEMAS),),
+    ):
+        if (nsp, fn) in ALLOWED_EXPOSED_FUNCTIONS:
+            continue
+        label = "procedure" if kind == "p" else "function"
+        violations.append(f"{label} {nsp}.{fn} is in an exposed schema")
 
     schema_exists = conn.execute(
         "SELECT 1 FROM pg_namespace WHERE nspname = %s", (APP_SCHEMA,)
@@ -101,6 +124,21 @@ def find_violations(conn: psycopg.Connection) -> list[str]:
             (APP_SCHEMA, role),
         ):
             violations.append(f"{role} has {priv} on {APP_SCHEMA}.{rel}")
+
+        # 3b'. Column-level grants (not covered by has_table_privilege).
+        for rel, priv in conn.execute(
+            """
+            SELECT c.relname, p.priv
+            FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+            CROSS JOIN unnest(ARRAY['SELECT','INSERT','UPDATE','REFERENCES']) AS p(priv)
+            WHERE n.nspname = %s AND c.relkind IN ('r','p','v','m','f')
+              AND has_any_column_privilege(%s, c.oid, p.priv)
+              AND NOT has_table_privilege(%s, c.oid, p.priv)
+            ORDER BY 1, 2
+            """,
+            (APP_SCHEMA, role, role),
+        ):
+            violations.append(f"{role} has column-level {priv} on {APP_SCHEMA}.{rel}")
 
         # 3c. Sequences.
         for rel, priv in conn.execute(

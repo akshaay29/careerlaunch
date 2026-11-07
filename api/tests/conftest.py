@@ -25,17 +25,24 @@ from app.main import create_app
 API_DIR = Path(__file__).resolve().parents[1]
 
 
-def pytest_asyncio_loop_factories(config: pytest.Config, item: pytest.Item) -> Mapping | None:
-    # psycopg's async driver cannot use Windows' default Proactor loop.
-    if sys.platform == "win32":
+if sys.platform == "win32":
+    # psycopg's async driver cannot use Windows' default Proactor loop. Defined only on
+    # Windows: pytest-asyncio rejects a hook implementation that returns None.
+    def pytest_asyncio_loop_factories(config: pytest.Config, item: pytest.Item) -> Mapping:
         return {"selector": asyncio.SelectorEventLoop}
-    return None
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    if get_settings().environment == "prod":
+        pytest.exit("Refusing to run tests with ENVIRONMENT=prod", returncode=2)
 
 
 def alembic_config() -> Config:
+    """Alembic config pinned to the TEST database (never MIGRATION_DATABASE_URL)."""
     cfg = Config(str(API_DIR / "alembic.ini"))
     cfg.set_main_option("script_location", str(API_DIR / "migrations"))
     cfg.attributes["configure_logger"] = False
+    cfg.attributes["database_url"] = get_settings().sqlalchemy_url
     return cfg
 
 

@@ -82,7 +82,7 @@ async def test_unhandled_is_500_without_internals(
     client: AsyncClient, caplog: pytest.LogCaptureFixture
 ) -> None:
     with caplog.at_level(logging.ERROR, logger="app.errors"):
-        resp = await client.get("/api/v1/_test/boom")
+        resp = await client.get("/api/v1/_test/boom", headers={"x-request-id": "rid-500"})
     body = _assert_problem(resp, 500, "internal-error")
     raw = resp.text
     assert SECRET not in raw
@@ -90,6 +90,17 @@ async def test_unhandled_is_500_without_internals(
     assert body["detail"] == "An unexpected error occurred."
     records = [r for r in caplog.records if r.name == "app.errors"]
     assert records and records[0].exc_info is not None
+    assert records[0].request_id == "rid-500"
+
+
+async def test_unhandled_500_keeps_cors_and_request_id(client: AsyncClient) -> None:
+    resp = await client.get(
+        "/api/v1/_test/boom",
+        headers={"Origin": "http://localhost:3000", "x-request-id": "rid-cors"},
+    )
+    _assert_problem(resp, 500, "internal-error")
+    assert resp.headers.get("access-control-allow-origin") == "http://localhost:3000"
+    assert resp.headers.get("x-request-id") == "rid-cors"
 
 
 def test_unhandled_log_line_is_json() -> None:

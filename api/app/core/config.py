@@ -1,22 +1,28 @@
 """The one pydantic-settings class. Every key is listed in the repo-root .env.example."""
 
 from functools import lru_cache
+from pathlib import Path
+from typing import Literal
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+API_DIR = Path(__file__).resolve().parents[2]
+REPO_DIR = API_DIR.parent
 
 LOCAL_DATABASE_URL = "postgresql+psycopg://postgres:postgres@127.0.0.1:54322/postgres"
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=(".env", "../.env"),
+        # Later files win: api/.env overrides the repo-root .env. Real env vars beat both.
+        env_file=(REPO_DIR / ".env", API_DIR / ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
     )
 
-    environment: str = Field(default="local", description="local | ci | prod")
-    log_level: str = "INFO"
+    environment: Literal["local", "ci", "prod"] = "local"
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
     # Postgres via the Supavisor *session* pooler (port 5432) in prod; Supabase CLI locally.
     database_url: SecretStr = SecretStr(LOCAL_DATABASE_URL)
@@ -32,10 +38,10 @@ class Settings(BaseSettings):
     def _blank_is_none(cls, v: object) -> object:
         return None if isinstance(v, str) and not v.strip() else v
 
-    @field_validator("log_level")
+    @field_validator("log_level", mode="before")
     @classmethod
-    def _upper(cls, v: str) -> str:
-        return v.upper()
+    def _upper(cls, v: object) -> object:
+        return v.upper() if isinstance(v, str) else v
 
     @property
     def cors_origins(self) -> list[str]:
