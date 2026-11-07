@@ -1,0 +1,28 @@
+# Render Blueprint: ONE free web service for the api (spine: prod environment).
+# Deploys are triggered only by the release workflow's deploy hook, AFTER migrations
+# (.github/workflows/migrate-deploy.yml), never by pushes.
+services:
+  - type: web
+    name: careerlaunch-api
+    runtime: python
+    plan: free
+    region: singapore
+    rootDir: api
+    autoDeployTrigger: "off"
+    buildCommand: pip install uv==0.13.1 && uv sync --frozen --no-dev
+    startCommand: .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.14.8"
+      - key: ENVIRONMENT
+        value: prod
+      - key: LOG_LEVEL
+        value: INFO
+      # Secrets / per-deployment values: set in the Render dashboard (never committed).
+      - key: DATABASE_URL
+        sync: false
+      - key: WEB_ORIGIN
+        sync: false
+      - key: CORS_EXTRA_ORIGINS
+        value: http://localhost:3000

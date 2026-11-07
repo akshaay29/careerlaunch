@@ -1,0 +1,67 @@
+[project]
+name = "careerlaunch-api"
+version = "0.1.0"
+description = "CareerLaunch API (FastAPI modular monolith)"
+requires-python = "==3.14.*"
+dependencies = [
+    "fastapi==0.162.0",
+    "pydantic==2.14.3",
+    "pydantic-settings==2.16.2",
+    "uvicorn==0.54.0",
+    "sqlalchemy[asyncio]==2.1.8",
+    "psycopg[binary]==3.3.8",
+    "alembic==1.20.1",
+    "procrastinate==3.10.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest==9.2.0",
+    "pytest-asyncio==1.4.1.post1",
+    "httpx==0.28.1",
+    "import-linter==2.16",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+testpaths = ["tests"]
+pythonpath = ["."]
+
+# --- import-linter (AD-3, AD-20, spine layer table) ---------------------------
+[tool.importlinter]
+root_packages = ["app"]
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Module order: tracker > matching > listings > profile > accounts (AD-20)"
+type = "layers"
+layers = [
+    "app.modules.tracker",
+    "app.modules.matching",
+    "app.modules.listings",
+    "app.modules.profile",
+    "app.modules.accounts",
+]
+
+[[tool.importlinter.contracts]]
+name = "Core kernel imports nothing from modules, ports or adapters"
+type = "forbidden"
+source_modules = ["app.core"]
+forbidden_modules = ["app.modules", "app.ports", "app.adapters"]
+
+[[tool.importlinter.contracts]]
+name = "Ports import only app.core"
+type = "forbidden"
+source_modules = ["app.ports"]
+forbidden_modules = ["app.modules", "app.adapters", "app.main"]
+
+[[tool.importlinter.contracts]]
+name = "Vendor SDKs only in app.adapters (AD-3)"
+type = "forbidden"
+source_modules = ["app.core", "app.ports", "app.modules", "app.main"]
+forbidden_modules = ["supabase", "apify_client", "googleapiclient", "groq", "brevo"]

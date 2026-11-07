@@ -1,0 +1,91 @@
+name: Migrate and deploy
+
+# Releases only: migrate the prod DB first (AD-13), then deploy api (Render), then web (Vercel).
+# Deploy jobs `needs: migrate`, so a failed migration stops the release.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Releases never overlap, and a running release is never cancelled mid-migration.
+concurrency:
+  group: migrate-deploy-production
+  cancel-in-progress: false
+
+env:
+  UV_VERSION: "0.13.1"
+  VERCEL_CLI_VERSION: "65.12.1"
+
+jobs:
+  migrate:
+    name: alembic upgrade head
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api
+    env:
+      ENVIRONMENT: prod
+      # Supavisor SESSION pooler URL (port 5432).
+      MIGRATION_DATABASE_URL: ${{ secrets.MIGRATION_DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+
+      - name: Check secret
+        run: |
+          if [ -z "$MIGRATION_DATABASE_URL" ]; then
+            echo "::error::MIGRATION_DATABASE_URL secret is not set"; exit 1
+          fi
+
+      - name: Install dependencies
+        run: uv sync --frozen --no-dev
+
+      - name: Migrate
+        run: uv run --no-dev alembic upgrade head
+
+  deploy-api:
+    name: Deploy api (Render deploy hook)
+    needs: migrate
+    runs-on: ubuntu-latest
+    env:
+      RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+    steps:
+      - name: Trigger Render deploy
+        run: |
+          if [ -z "$RENDER_DEPLOY_HOOK_URL" ]; then
+            echo "::error::RENDER_DEPLOY_HOOK_URL secret is not set"; exit 1
+          fi
+          curl --fail --silent --show-error --output /dev/null -X POST "$RENDER_DEPLOY_HOOK_URL"
+
+  deploy-web:
+    name: Deploy web (Vercel)
+    needs: [migrate, deploy-api]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      - name: Check secrets
+        run: |
+          for k in VERCEL_TOKEN VERCEL_ORG_ID VERCEL_PROJECT_ID; do
+            if [ -z "${!k}" ]; then echo "::error::$k secret is not set"; exit 1; fi
+          done
+
+      - name: Deploy
+        run: npx --yes "vercel@${VERCEL_CLI_VERSION}" deploy --prod --yes --token="$VERCEL_TOKEN"
