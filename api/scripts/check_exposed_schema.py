@@ -6,7 +6,8 @@ Exits 1 if:
     extension-owned ones and Supabase's own ``graphql_public.graphql`` entrypoint;
   * any table in schema ``app`` does not have row level security enabled;
   * ``anon`` or ``authenticated`` hold any privilege on schema ``app`` or its objects
-    (directly, via role membership, or via PUBLIC).
+    (directly, via role membership, or via PUBLIC);
+  * the connected role is neither superuser nor BYPASSRLS (forced RLS would lock it out).
 
 Usage: ``uv run python scripts/check_exposed_schema.py`` (reads DATABASE_URL via Settings).
 """
@@ -51,6 +52,17 @@ def find_violations(conn: psycopg.Connection) -> list[str]:
     if missing:
         roles = ", ".join(r for (r,) in missing)
         return [f"role(s) missing: {roles} (apply tests/sql/supabase_roles.sql on plain Postgres)"]
+
+    # 0. App tables use FORCE ROW LEVEL SECURITY with no policies, so the role the API and
+    #    migrations connect as must bypass RLS (superuser or BYPASSRLS), or every query fails.
+    (bypasses,) = conn.execute(
+        "SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname = current_user"
+    ).fetchone()  # type: ignore[misc]
+    if not bypasses:
+        violations.append(
+            "connected role cannot bypass RLS (needs SUPERUSER or BYPASSRLS): forced RLS on "
+            "schema app would block it"
+        )
 
     # 1. Relations in exposed schemas.
     for nsp, rel, kind in conn.execute(

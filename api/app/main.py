@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from app.core.config import Settings, get_settings
 from app.core.db import dispose_engine
 from app.core.errors import install_error_handlers
+from app.core.internal import router as internal_router
 from app.core.logging import REQUEST_ID_HEADER, RequestIdMiddleware, configure_logging
 from app.modules.accounts.router import router as accounts_router
 from app.modules.listings.router import router as listings_router
@@ -72,6 +73,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(listings_router, prefix=API_V1)
     app.include_router(matching_router, prefix=API_V1)
     app.include_router(tracker_router, prefix=API_V1)
+    include_internal_router(app, internal_router)
     return app
 
 

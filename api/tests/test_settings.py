@@ -30,3 +30,21 @@ def test_cors_origins_include_vercel_and_localhost(monkeypatch: pytest.MonkeyPat
     s = Settings(_env_file=None)
     assert s.cors_origins[0] == "https://careerlaunch.vercel.app"
     assert "http://localhost:3000" in s.cors_origins
+
+
+def test_drain_settings_defaults_and_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pydantic import ValidationError
+
+    for k in ("DRAIN_SECRET", "DRAIN_SECRET_PREVIOUS", "DRAIN_TIMEOUT_SECONDS", "DRAIN_STALE_AFTER_MINUTES"):
+        monkeypatch.delenv(k, raising=False)
+    s = Settings(_env_file=None)
+    assert s.drain_secret is None and s.drain_secret_previous is None
+    assert (s.drain_timeout_seconds, s.drain_stale_after_minutes) == (240, 15)
+    monkeypatch.setenv("DRAIN_SECRET", "  ")
+    monkeypatch.setenv("DRAIN_SECRET_PREVIOUS", "old-drain-value")
+    s = Settings(_env_file=None)
+    assert s.drain_secret is None
+    assert "old-drain-value" not in repr(s)
+    monkeypatch.setenv("DRAIN_TIMEOUT_SECONDS", "241")
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
