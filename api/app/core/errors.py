@@ -42,6 +42,18 @@ class NotFoundError(DomainError):
     title = "Not found"
 
 
+class UnauthorizedError(DomainError):
+    status = 401
+    slug = "unauthorized"
+    title = "Unauthorized"
+
+
+class DrainStaleError(DomainError):
+    status = 503
+    slug = "drain-stale"
+    title = "Drain stale"
+
+
 class ForbiddenError(DomainError):
     status = 403
     slug = "forbidden"

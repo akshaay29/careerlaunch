@@ -4,7 +4,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 API_DIR = Path(__file__).resolve().parents[2]
@@ -33,7 +33,18 @@ class Settings(BaseSettings):
     web_origin: str = "http://localhost:3000"
     cors_extra_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
 
-    @field_validator("migration_database_url", mode="before")
+    # Background-job drain (AD-4). /internal/* requires `Authorization: Bearer <secret>`.
+    # Both values are accepted so the secret can be rotated without downtime.
+    drain_secret: SecretStr | None = None
+    drain_secret_previous: SecretStr | None = None
+    # Hard cap on one drain (asyncio.timeout); the spine allows at most 4 minutes.
+    drain_timeout_seconds: int = Field(default=240, ge=1, le=240)
+    # GET /internal/health returns 503 when the last drain is older than this.
+    drain_stale_after_minutes: int = Field(default=15, ge=1)
+
+    @field_validator(
+        "migration_database_url", "drain_secret", "drain_secret_previous", mode="before"
+    )
     @classmethod
     def _blank_is_none(cls, v: object) -> object:
         return None if isinstance(v, str) and not v.strip() else v

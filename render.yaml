@@ -26,3 +26,13 @@ services:
         sync: false
       - key: CORS_EXTRA_ORIGINS
         value: http://localhost:3000
+      # Drain secret for /internal/* (AD-4); same value as Vault `drain_secret` and the
+      # DRAIN_SECRET GitHub secret. DRAIN_SECRET_PREVIOUS only while rotating.
+      - key: DRAIN_SECRET
+        sync: false
+      - key: DRAIN_SECRET_PREVIOUS
+        sync: false
+      - key: DRAIN_TIMEOUT_SECONDS
+        value: "240"
+      - key: DRAIN_STALE_AFTER_MINUTES
+        value: "15"

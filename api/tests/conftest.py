@@ -86,3 +86,43 @@ async def client(app) -> AsyncIterator[AsyncClient]:
     transport = ASGITransport(app=app, raise_app_exceptions=False)
     async with AsyncClient(transport=transport, base_url="http://testserver") as c:
         yield c
+
+
+JOB_TABLES = (
+    "job_outbox",
+    "schedules",
+    "ops_events",
+    "drain_state",
+    "procrastinate_events",
+    "procrastinate_periodic_defers",
+    "procrastinate_jobs",
+    "procrastinate_workers",
+)
+
+
+@pytest.fixture
+def clean_jobs(migrated_db: str) -> Iterator[str]:
+    """Empty every job/ops table before (and after) the test."""
+
+    def _truncate() -> None:
+        with psycopg.connect(to_libpq_url(migrated_db), autocommit=True) as conn:
+            conn.execute(f"TRUNCATE {', '.join('app.' + t for t in JOB_TABLES)} CASCADE")
+
+    _truncate()
+    yield migrated_db
+    _truncate()
+
+
+DRAIN_SECRET = "test-drain-secret-current"
+DRAIN_SECRET_PREVIOUS = "test-drain-secret-previous"
+
+
+@pytest.fixture
+def drain_secrets(monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[str, str]]:
+    """Configure DRAIN_SECRET / DRAIN_SECRET_PREVIOUS for the test (Settings cache reset)."""
+    monkeypatch.setenv("DRAIN_SECRET", DRAIN_SECRET)
+    monkeypatch.setenv("DRAIN_SECRET_PREVIOUS", DRAIN_SECRET_PREVIOUS)
+    get_settings.cache_clear()
+    yield DRAIN_SECRET, DRAIN_SECRET_PREVIOUS
+    monkeypatch.undo()
+    get_settings.cache_clear()

@@ -67,6 +67,14 @@ source_modules = ["app.core", "app.ports", "app.modules", "app.main"]
 forbidden_modules = ["supabase", "apify_client", "googleapiclient", "groq", "brevo"]
 
 [[tool.importlinter.contracts]]
+name = "Modules never import Procrastinate; jobs go through app.core.jobs (AD-4)"
+type = "forbidden"
+source_modules = ["app.modules"]
+forbidden_modules = ["procrastinate"]
+# modules -> app.core.jobs -> procrastinate is the sanctioned path; only direct imports break it.
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
 name = "Modules reach adapters only through ports (AD-3)"
 type = "forbidden"
 source_modules = ["app.modules"]

@@ -1,0 +1,59 @@
+name: Drain health and backup drain
+
+# AD-4: every 15 minutes, check GET /internal/health. If the last drain is stale (503) or the
+# API is unreachable, trigger a backup POST /internal/jobs/drain and FAIL the job, so GitHub's
+# failure email alerts the owner. The bearer secret is sent from stdin, never in a URL or argv.
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: health-drain
+  cancel-in-progress: false
+
+jobs:
+  health:
+    name: Check drain health
+    environment: production
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      API_BASE_URL: ${{ secrets.API_BASE_URL }}
+      DRAIN_SECRET: ${{ secrets.DRAIN_SECRET }}
+    steps:
+      - name: Check secrets
+        id: config
+        run: |
+          # Not configured yet (e.g. right after merge): don't fail every 15 minutes.
+          for k in API_BASE_URL DRAIN_SECRET; do
+            if [ -z "${!k}" ]; then
+              echo "::notice::drain health not configured yet ($k secret is not set); skipping"
+              echo "configured=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+          echo "configured=true" >> "$GITHUB_OUTPUT"
+
+      - name: Health check, backup drain on failure
+        if: steps.config.outputs.configured == 'true'
+        run: |
+          base="${API_BASE_URL%/}"
+          auth() { printf 'Authorization: Bearer %s\n' "$DRAIN_SECRET"; }
+          # Render Free may be asleep: allow a slow cold start and retry connection errors.
+          status="$(auth | curl --silent --output /dev/null --write-out '%{http_code}' \
+            --max-time 120 --retry 2 --retry-delay 10 --retry-all-errors \
+            --header @- "$base/internal/health" || true)"
+          echo "GET /internal/health -> ${status:-no response}"
+          if [ "$status" = "200" ]; then
+            exit 0
+          fi
+          drain="$(auth | curl --silent --output /dev/null --write-out '%{http_code}' \
+            --max-time 120 --retry 2 --retry-delay 10 --retry-all-errors \
+            --request POST --header @- "$base/internal/jobs/drain" || true)"
+          echo "POST /internal/jobs/drain -> ${drain:-no response}"
+          echo "::error::Drain health check failed (HTTP ${status:-none}); backup drain returned HTTP ${drain:-none}"
+          exit 1
