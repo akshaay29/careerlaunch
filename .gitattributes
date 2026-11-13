@@ -1,0 +1,4 @@
+# Keep LF everywhere so generated files (web/openapi.json, web/src/api) diff cleanly on every OS.
+* text=auto eol=lf
+*.ico binary
+*.png binary

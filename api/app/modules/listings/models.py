@@ -1,0 +1,1 @@
+"""listings.models (stub)."""
