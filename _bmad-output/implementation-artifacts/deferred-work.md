@@ -46,3 +46,6 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-6-skill-profile-extracted-from-my-resume.md`
   summary: Add component tests for `SkillProfileEditor` (polling, timeout, 401, reset confirm) once `web` has a component or e2e harness.
   evidence: Only `lib/skill-profile.ts` helpers are tested.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-7-set-my-preferences.md`
+  summary: Add component or e2e tests for the whole onboarding flow (consent → Resume → Skill Profile → Preferences → "You're set up") and the settings hub links, once `web` has a harness.
+  evidence: Only pure helpers are tested, so dropping `onSaved` or a Continue button would break SM-6 onboarding silently.

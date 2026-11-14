@@ -83,6 +83,7 @@ dependencies = [
     { name = "python-docx" },
     { name = "python-multipart" },
     { name = "sqlalchemy", extra = ["asyncio"] },
+    { name = "tzdata" },
     { name = "uvicorn" },
 ]
 
@@ -108,6 +109,7 @@ requires-dist = [
     { name = "python-docx", specifier = "==1.2.0" },
     { name = "python-multipart", specifier = "==0.0.33" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = "==2.1.8" },
+    { name = "tzdata", specifier = "==2026.6" },
     { name = "uvicorn", specifier = "==0.54.0" },
 ]
 

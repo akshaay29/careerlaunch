@@ -88,6 +88,20 @@ export type ConsentStatus = {
 };
 
 /**
+ * DegreeOut
+ */
+export type DegreeOut = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Label
+     */
+    label: string;
+};
+
+/**
  * HTTPValidationError
  */
 export type HttpValidationError = {
@@ -125,6 +139,122 @@ export type Me = {
      * Role
      */
     role: 'student' | 'admin';
+};
+
+/**
+ * PreferencesIn
+ *
+ * The whole Preferences object (a full replace; every field is required, nullable ones
+ * may be null). Role titles and locations are trimmed, blanks dropped and duplicates
+ * (ignoring case) dropped; at most 10 of 80 characters each.
+ */
+export type PreferencesIn = {
+    /**
+     * Role Titles
+     */
+    role_titles: Array<string>;
+    /**
+     * Locations
+     */
+    locations: Array<string>;
+    /**
+     * Job Types
+     */
+    job_types: Array<'internship' | 'full_time'>;
+    /**
+     * Batch Year
+     */
+    batch_year: number | null;
+    /**
+     * Cgpa
+     */
+    cgpa: number | null;
+    /**
+     * Degree
+     */
+    degree: string | null;
+    /**
+     * Degree Other
+     */
+    degree_other: string | null;
+    /**
+     * Work Authorisation
+     */
+    work_authorisation: 'india_authorised' | 'needs_sponsorship' | null;
+    /**
+     * Threshold
+     */
+    threshold: number;
+    /**
+     * Alert Frequency
+     */
+    alert_frequency: 'daily' | 'weekly' | 'off';
+    /**
+     * Timezone
+     */
+    timezone: string;
+};
+
+/**
+ * PreferencesOut
+ *
+ * The stored Preferences, or the defaults with ``saved: false`` before the first save.
+ * ``role_titles``, ``locations`` and ``degree_other`` are untrusted text: render them as
+ * plain text.
+ */
+export type PreferencesOut = {
+    /**
+     * Role Titles
+     */
+    role_titles: Array<string>;
+    /**
+     * Locations
+     */
+    locations: Array<string>;
+    /**
+     * Job Types
+     */
+    job_types: Array<'internship' | 'full_time'>;
+    /**
+     * Batch Year
+     */
+    batch_year: number | null;
+    /**
+     * Cgpa
+     */
+    cgpa: number | null;
+    /**
+     * Degree
+     */
+    degree: string | null;
+    /**
+     * Degree Other
+     */
+    degree_other: string | null;
+    /**
+     * Work Authorisation
+     */
+    work_authorisation: 'india_authorised' | 'needs_sponsorship' | null;
+    /**
+     * Threshold
+     */
+    threshold: number;
+    /**
+     * Alert Frequency
+     */
+    alert_frequency: 'daily' | 'weekly' | 'off';
+    /**
+     * Timezone
+     */
+    timezone: string;
+    /**
+     * Saved
+     */
+    saved: boolean;
+    /**
+     * Updated At
+     */
+    updated_at: string | null;
 };
 
 /**
@@ -724,3 +854,60 @@ export type SuggestSkillsResponses = {
 };
 
 export type SuggestSkillsResponse = SuggestSkillsResponses[keyof SuggestSkillsResponses];
+
+export type GetPreferencesData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/preferences';
+};
+
+export type GetPreferencesResponses = {
+    /**
+     * Successful Response
+     */
+    200: PreferencesOut;
+};
+
+export type GetPreferencesResponse = GetPreferencesResponses[keyof GetPreferencesResponses];
+
+export type SavePreferencesData = {
+    body: PreferencesIn;
+    path?: never;
+    query?: never;
+    url: '/api/v1/preferences';
+};
+
+export type SavePreferencesErrors = {
+    /**
+     * A field is missing or invalid
+     */
+    422: unknown;
+};
+
+export type SavePreferencesResponses = {
+    /**
+     * Successful Response
+     */
+    200: PreferencesOut;
+};
+
+export type SavePreferencesResponse = SavePreferencesResponses[keyof SavePreferencesResponses];
+
+export type ListDegreesData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/degrees';
+};
+
+export type ListDegreesResponses = {
+    /**
+     * Response Listdegrees
+     *
+     * Successful Response
+     */
+    200: Array<DegreeOut>;
+};
+
+export type ListDegreesResponse = ListDegreesResponses[keyof ListDegreesResponses];

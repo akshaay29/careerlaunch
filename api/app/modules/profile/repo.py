@@ -1,5 +1,5 @@
-"""profile.repo: SQL for the ``resumes`` and ``skill_profiles`` tables only (AD-2). Every
-query is owner-scoped."""
+"""profile.repo: SQL for the ``resumes``, ``skill_profiles`` and ``preferences`` tables only
+(AD-2). Every query is owner-scoped."""
 
 import uuid
 from datetime import datetime
@@ -9,7 +9,7 @@ from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.profile.models import Resume, SkillProfile
+from app.modules.profile.models import Preferences, Resume, SkillProfile
 
 
 async def lock_owner_resumes(session: AsyncSession, owner_id: uuid.UUID) -> None:
@@ -220,3 +220,39 @@ async def save_skill_edits(
         index_elements=[SkillProfile.owner_id], set_={**values, "updated_at": func.now()}
     )
     await session.execute(stmt)
+
+
+# --------------------------------------------------------------------------- preferences
+
+
+async def lock_owner_preferences(session: AsyncSession, owner_id: uuid.UUID) -> None:
+    """Serialise Preferences saves of one owner until the transaction ends (the row may not
+    exist yet, so a row lock is not enough)."""
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+        {"key": f"preferences:{owner_id}"},
+    )
+
+
+async def get_preferences(session: AsyncSession, owner_id: uuid.UUID) -> Preferences | None:
+    result = await session.execute(
+        select(Preferences)
+        .where(Preferences.owner_id == owner_id)
+        .execution_options(populate_existing=True)
+    )
+    return result.scalar_one_or_none()
+
+
+async def upsert_preferences(
+    session: AsyncSession, owner_id: uuid.UUID, values: dict[str, Any]
+) -> Preferences:
+    """Replace the owner's whole Preferences row (insert it when there is none)."""
+    stmt = insert(Preferences).values(owner_id=owner_id, **values)
+    stmt = (
+        stmt.on_conflict_do_update(
+            index_elements=[Preferences.owner_id], set_={**values, "updated_at": func.now()}
+        )
+        .returning(Preferences)
+        .execution_options(populate_existing=True)
+    )
+    return (await session.execute(stmt)).scalar_one()

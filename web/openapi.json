@@ -637,6 +637,105 @@
           }
         }
       }
+    },
+    "/api/v1/preferences": {
+      "get": {
+        "tags": [
+          "profile"
+        ],
+        "summary": "Get Preferences",
+        "description": "The Student's Preferences, or the defaults with ``saved: false`` before the first\nsave.",
+        "operationId": "getPreferences",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreferencesOut"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "SupabaseAccessToken": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "profile"
+        ],
+        "summary": "Save Preferences",
+        "description": "Replace the whole Preferences object. Saving the same values again changes\nnothing.",
+        "operationId": "savePreferences",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreferencesIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreferencesOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is missing or invalid",
+            "content": {
+              "application/problem+json": {}
+            }
+          }
+        },
+        "security": [
+          {
+            "SupabaseAccessToken": []
+          }
+        ]
+      }
+    },
+    "/api/v1/degrees": {
+      "get": {
+        "tags": [
+          "profile"
+        ],
+        "summary": "List Degrees",
+        "description": "The canonical degrees for the Preferences form, in display order.",
+        "operationId": "listDegrees",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/DegreeOut"
+                  },
+                  "type": "array",
+                  "title": "Response Listdegrees"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "SupabaseAccessToken": []
+          }
+        ]
+      }
     }
   },
   "components": {
@@ -774,6 +873,24 @@
         "title": "ConsentStatus",
         "description": "One purpose: the text to show (plain-text paragraphs) and the Student's status on it.\n\n``status``: ``granted`` (active on the current version), ``outdated`` (active on an older\nversion: agree again), ``revoked`` (withdrawn) or ``none`` (never agreed)."
       },
+      "DegreeOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "label"
+        ],
+        "title": "DegreeOut"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -829,6 +946,277 @@
         ],
         "title": "Me",
         "description": "The calling account. ``role`` comes from the database, never from the token."
+      },
+      "PreferencesIn": {
+        "properties": {
+          "role_titles": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 50,
+            "title": "Role Titles"
+          },
+          "locations": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 50,
+            "title": "Locations"
+          },
+          "job_types": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "internship",
+                "full_time"
+              ]
+            },
+            "type": "array",
+            "maxItems": 10,
+            "title": "Job Types"
+          },
+          "batch_year": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 2100.0,
+                "minimum": 2000.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Year"
+          },
+          "cgpa": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 10.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cgpa"
+          },
+          "degree": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Degree"
+          },
+          "degree_other": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Degree Other"
+          },
+          "work_authorisation": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "india_authorised",
+                  "needs_sponsorship"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Work Authorisation"
+          },
+          "threshold": {
+            "type": "integer",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Threshold"
+          },
+          "alert_frequency": {
+            "type": "string",
+            "enum": [
+              "daily",
+              "weekly",
+              "off"
+            ],
+            "title": "Alert Frequency"
+          },
+          "timezone": {
+            "type": "string",
+            "maxLength": 64,
+            "title": "Timezone"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "role_titles",
+          "locations",
+          "job_types",
+          "batch_year",
+          "cgpa",
+          "degree",
+          "degree_other",
+          "work_authorisation",
+          "threshold",
+          "alert_frequency",
+          "timezone"
+        ],
+        "title": "PreferencesIn",
+        "description": "The whole Preferences object (a full replace; every field is required, nullable ones\nmay be null). Role titles and locations are trimmed, blanks dropped and duplicates\n(ignoring case) dropped; at most 10 of 80 characters each."
+      },
+      "PreferencesOut": {
+        "properties": {
+          "role_titles": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Role Titles"
+          },
+          "locations": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Locations"
+          },
+          "job_types": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "internship",
+                "full_time"
+              ]
+            },
+            "type": "array",
+            "title": "Job Types"
+          },
+          "batch_year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Year"
+          },
+          "cgpa": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cgpa"
+          },
+          "degree": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Degree"
+          },
+          "degree_other": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Degree Other"
+          },
+          "work_authorisation": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "india_authorised",
+                  "needs_sponsorship"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Work Authorisation"
+          },
+          "threshold": {
+            "type": "integer",
+            "title": "Threshold"
+          },
+          "alert_frequency": {
+            "type": "string",
+            "enum": [
+              "daily",
+              "weekly",
+              "off"
+            ],
+            "title": "Alert Frequency"
+          },
+          "timezone": {
+            "type": "string",
+            "title": "Timezone"
+          },
+          "saved": {
+            "type": "boolean",
+            "title": "Saved"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "role_titles",
+          "locations",
+          "job_types",
+          "batch_year",
+          "cgpa",
+          "degree",
+          "degree_other",
+          "work_authorisation",
+          "threshold",
+          "alert_frequency",
+          "timezone",
+          "saved",
+          "updated_at"
+        ],
+        "title": "PreferencesOut",
+        "description": "The stored Preferences, or the defaults with ``saved: false`` before the first save.\n``role_titles``, ``locations`` and ``degree_other`` are untrusted text: render them as\nplain text."
       },
       "ProfileSkill": {
         "properties": {
