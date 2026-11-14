@@ -62,6 +62,7 @@ npm run dev
 | `uv run python scripts/check_exposed_schema.py` | AD-1 check: nothing in `public`/`graphql_public`, RLS on, no grants to `anon`/`authenticated` |
 | `uv run python scripts/drain_local.py` | Run one job drain locally (`--every 300` to loop every 5 minutes, like pg_cron) |
 | `uv run python scripts/promote_admin.py <email>` | Make an existing account an admin (audited; see "Auth and roles") |
+| `uv run python scripts/seed_demo_listings.py` | Put ~30 fake demo Listings in the shared pool (local/ci only; idempotent; see "Listings") |
 | `uv run alembic revision -m "..."` | New migration. Call `migrations.helpers.create_app_table_rls(table)` for every new table. |
 
 | Command (from `web/`) | Purpose |
@@ -289,6 +290,45 @@ Supabase dashboard → Authentication:
   NULL), or if any FK to `accounts` is neither CASCADE nor SET NULL.
 - **Web:** `/settings/account` (type your email to enable "Delete my account"); after a 204
   the browser session is cleared and the user lands on the public `/account-deleted` page.
+
+## Listings (FR-6, FR-7, AD-3, AD-7, Story 2.1)
+
+- **Tables:** `app.sources` (global; `enabled` gates collection per Source; seeded with
+  `linkedin` and `manual`) and `app.listings` (global, no `owner_id`, unique on
+  `(source, source_job_id)`). A pool Listing keeps only title, company, location, job type,
+  posted date, deadline, source URL, skills (with `vocab_version`) and `search_doc` (a
+  weighted tsvector: title A, company B, skill labels C, description D). **No column holds the
+  description**: it reaches Postgres only as a bind parameter of `to_tsvector`, then is gone.
+- **Source seam:** `app/ports/source_adapter.py` defines `ListingDraft` (validated: stripped,
+  length-capped text; `http(s)` URLs only), `SourceQuery` and the `SourceAdapter` protocol.
+  The in-memory fake is `tests/fakes/source_adapter.py`.
+- **One ingest pipeline:** `listings.service.ingest_draft` upserts one draft;
+  `collect_and_ingest` runs an adapter through it (returns 0 without calling a disabled
+  Source and records `listings.collect_skipped`), reads the collector's `pool_contribution`
+  consent once, stores each draft in its own savepoint (a refused draft is skipped and
+  counted as `rejected`), records `listings.ingested` (counts only) and publishes one
+  `ListingsIngested` per call. Called directly, `ingest_draft` publishes its own event.
+- **Visibility:** `visibility_owner_id` NULL means the shared pool. A Student without
+  `pool_contribution` consent collects private Listings (only they see them). Visibility only
+  widens: when a consenting Student collects a private Listing it becomes public (and they
+  become `collected_by`); a pool Listing never becomes private. Only a contributing
+  collector, or the Student a row is private to, refreshes its content (a thinner scrape
+  keeps known values, and a re-seen Listing whose deadline is unknown or not past is no
+  longer expired); anyone else only advances `last_seen_at`. Deleting a Student sets their
+  pool rows' `collected_by` to NULL and deletes their private rows.
+- **API:** `GET /api/v1/listings` (`limit` default 20, max 50; opaque `cursor`), newest
+  first by `(first_seen_at, id)`, and `GET /api/v1/listings/{id}` (404 for anything not
+  visible to the Student, expired, or unknown). Expired rows (`expired_at` set) are hidden.
+- **Web:** `/listings` and `/listings/[id]`. Every card and the detail page show "via
+  {Source}" and "CareerLaunch is not affiliated with LinkedIn or any job board."; "Apply"
+  opens the source URL in a new tab (`noopener noreferrer nofollow`, http(s) only). Scraped
+  text is rendered as plain text.
+- **Local demo data:** with the Supabase CLI stack running and migrated, run
+  `uv run python scripts/seed_demo_listings.py` from `api/`. It creates (or relabels) a
+  `demo` Source labelled "Demo data" and ingests ~30 invented Listings (`source_job_id`
+  `demo-001`...) under it into the pool as the System collector, through the real pipeline;
+  running it again refreshes the same rows. It runs only with `ENVIRONMENT` `local` or `ci`.
+  Then sign in and open `/listings`.
 
 ## CI (`.github/workflows/ci.yml`)
 

@@ -208,6 +208,96 @@ export type Health = {
 };
 
 /**
+ * ListingList
+ *
+ * Newest first. Pass ``next_cursor`` as ``cursor`` to get the next page (null = done).
+ */
+export type ListingList = {
+    /**
+     * Items
+     */
+    items: Array<ListingOut>;
+    /**
+     * Next Cursor
+     */
+    next_cursor: string | null;
+};
+
+/**
+ * ListingOut
+ *
+ * One Listing. Every text field is scraped, untrusted text: render it as plain text.
+ * ``url`` is the source page ("Apply"); show ``source_label`` ("via LinkedIn") and the
+ * not-affiliated notice with it.
+ */
+export type ListingOut = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Title
+     */
+    title: string;
+    /**
+     * Company
+     */
+    company: string;
+    /**
+     * Location
+     */
+    location: string;
+    /**
+     * Job Type
+     */
+    job_type: 'internship' | 'full_time' | null;
+    /**
+     * Posted At
+     */
+    posted_at: string | null;
+    /**
+     * Deadline
+     */
+    deadline: string | null;
+    /**
+     * Url
+     */
+    url: string;
+    /**
+     * Source
+     */
+    source: string;
+    /**
+     * Source Label
+     */
+    source_label: string;
+    /**
+     * Skills
+     */
+    skills: Array<ListingSkill>;
+    /**
+     * First Seen At
+     */
+    first_seen_at: string;
+};
+
+/**
+ * ListingSkill
+ *
+ * A canonical skill extracted from the Listing.
+ */
+export type ListingSkill = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Label
+     */
+    label: string;
+};
+
+/**
  * Me
  *
  * The calling account. ``role`` comes from the database, never from the token.
@@ -1159,3 +1249,69 @@ export type ListDegreesResponses = {
 };
 
 export type ListDegreesResponse = ListDegreesResponses[keyof ListDegreesResponses];
+
+export type ListListingsData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Limit
+         */
+        limit?: number;
+        /**
+         * Cursor
+         */
+        cursor?: string | null;
+    };
+    url: '/api/v1/listings';
+};
+
+export type ListListingsErrors = {
+    /**
+     * The cursor or limit is invalid
+     */
+    422: unknown;
+};
+
+export type ListListingsResponses = {
+    /**
+     * Successful Response
+     */
+    200: ListingList;
+};
+
+export type ListListingsResponse = ListListingsResponses[keyof ListListingsResponses];
+
+export type GetListingData = {
+    body?: never;
+    path: {
+        /**
+         * Listing Id
+         */
+        listing_id: string;
+    };
+    query?: never;
+    url: '/api/v1/listings/{listing_id}';
+};
+
+export type GetListingErrors = {
+    /**
+     * No such Listing for this Student
+     */
+    404: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type GetListingError = GetListingErrors[keyof GetListingErrors];
+
+export type GetListingResponses = {
+    /**
+     * Successful Response
+     */
+    200: ListingOut;
+};
+
+export type GetListingResponse = GetListingResponses[keyof GetListingResponses];

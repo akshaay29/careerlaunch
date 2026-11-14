@@ -1003,6 +1003,124 @@
           }
         ]
       }
+    },
+    "/api/v1/listings": {
+      "get": {
+        "tags": [
+          "listings"
+        ],
+        "summary": "List Listings",
+        "description": "Listings you can see (the shared pool and your own private ones), newest first.",
+        "operationId": "listListings",
+        "security": [
+          {
+            "SupabaseAccessToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 50,
+              "minimum": 1,
+              "default": 20,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 200
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListingList"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The cursor or limit is invalid",
+            "content": {
+              "application/problem+json": {}
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/listings/{listing_id}": {
+      "get": {
+        "tags": [
+          "listings"
+        ],
+        "summary": "Get Listing",
+        "operationId": "getListing",
+        "security": [
+          {
+            "SupabaseAccessToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "listing_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Listing Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListingOut"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such Listing for this Student",
+            "content": {
+              "application/problem+json": {}
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1305,6 +1423,155 @@
           "status"
         ],
         "title": "Health"
+      },
+      "ListingList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ListingOut"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "ListingList",
+        "description": "Newest first. Pass ``next_cursor`` as ``cursor`` to get the next page (null = done)."
+      },
+      "ListingOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "company": {
+            "type": "string",
+            "title": "Company"
+          },
+          "location": {
+            "type": "string",
+            "title": "Location"
+          },
+          "job_type": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "internship",
+                  "full_time"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Type"
+          },
+          "posted_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Posted At"
+          },
+          "deadline": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deadline"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "source_label": {
+            "type": "string",
+            "title": "Source Label"
+          },
+          "skills": {
+            "items": {
+              "$ref": "#/components/schemas/ListingSkill"
+            },
+            "type": "array",
+            "title": "Skills"
+          },
+          "first_seen_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "First Seen At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "company",
+          "location",
+          "job_type",
+          "posted_at",
+          "deadline",
+          "url",
+          "source",
+          "source_label",
+          "skills",
+          "first_seen_at"
+        ],
+        "title": "ListingOut",
+        "description": "One Listing. Every text field is scraped, untrusted text: render it as plain text.\n``url`` is the source page (\"Apply\"); show ``source_label`` (\"via LinkedIn\") and the\nnot-affiliated notice with it."
+      },
+      "ListingSkill": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "label"
+        ],
+        "title": "ListingSkill",
+        "description": "A canonical skill extracted from the Listing."
       },
       "Me": {
         "properties": {

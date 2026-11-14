@@ -70,6 +70,16 @@ class AccountDeleting(Event):
     owner_id: uuid.UUID
 
 
+@dataclass(frozen=True)
+class ListingsIngested(Event):
+    """One collection call stored (inserted or refreshed) ``listing_ids`` (FR-6, AD-9).
+    ``collected_by`` is the Student whose run collected them, or None for the System (seed).
+    Matching scores new Listings in batches from this (Epic 3)."""
+
+    listing_ids: tuple[uuid.UUID, ...]
+    collected_by: uuid.UUID | None
+
+
 Handler = Callable[[AsyncSession, Any], Awaitable[None]]
 
 _subscribers: dict[type[Event], list[Handler]] = {}
