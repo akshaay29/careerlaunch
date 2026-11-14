@@ -24,7 +24,7 @@ import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 import psycopg
@@ -379,6 +379,53 @@ async def pause_owner_schedules(
         return 0
     result = await session.execute(_PAUSE_OWNER, {"owner_id": owner_id, "kinds": kinds})
     return int(getattr(result, "rowcount", 0) or 0)
+
+
+_UPSERT_OWNER_SCHEDULE = text(
+    """
+    INSERT INTO schedules (id, kind, owner_id, next_run_at, paused, "interval")
+    VALUES (:id, :kind, :owner_id, :next_run_at, false, :interval)
+    ON CONFLICT ON CONSTRAINT schedules_kind_owner_key DO UPDATE
+    SET next_run_at = CASE WHEN schedules.paused THEN EXCLUDED.next_run_at
+                           ELSE schedules.next_run_at END,
+        paused = false,
+        "interval" = EXCLUDED."interval"
+    RETURNING id
+    """
+)
+
+
+async def upsert_owner_schedule(
+    session: AsyncSession,
+    kind: str,
+    owner_id: uuid.UUID,
+    *,
+    interval: timedelta,
+    next_run_at: datetime,
+) -> uuid.UUID:
+    """Create ``owner_id``'s ``schedules`` row of ``kind`` (a registered task name) with
+    ``next_run_at``, or resume a paused one (unpaused, with ``next_run_at``). An active row
+    keeps its ``next_run_at`` (it is never pushed back); ``interval`` is always updated. On the
+    caller's session (never commits). Returns the row id."""
+    _check_task_name(kind)
+    _registered_task(kind)
+    if not isinstance(owner_id, uuid.UUID):
+        raise ValueError("owner_id must be a uuid.UUID")
+    if interval <= timedelta(0):
+        raise ValueError("interval must be positive")
+    if next_run_at.utcoffset() is None:
+        raise ValueError("next_run_at must be a timezone-aware datetime")
+    result = await session.execute(
+        _UPSERT_OWNER_SCHEDULE,
+        {
+            "id": uuid.uuid7(),
+            "kind": kind,
+            "owner_id": owner_id,
+            "next_run_at": next_run_at,
+            "interval": interval,
+        },
+    )
+    return result.scalar_one()
 
 
 async def scheduler_tick() -> int:

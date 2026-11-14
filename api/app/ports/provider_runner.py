@@ -5,14 +5,14 @@ Implemented by ``app.adapters.apify`` (Apify REST API over httpx) and by an in-m
 :func:`install_provider_runner`; routers reach it through :func:`provider_runner_dependency`,
 so ``modules`` never import ``adapters``.
 
-Story 2.2 needs only token validation. Story 2.3 adds the run methods (start a run, poll it,
-fetch its items) to this protocol; ``listings.service.start_provider_run`` stays their only
-caller.
+Story 2.2 added token validation. Story 2.3 adds the run methods (start a run, read its
+state, fetch its items); ``listings.service`` (``start_provider_run`` and the poll of the run
+it started) is their only caller. Every method takes the token as a ``SecretStr``.
 """
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable
 
 from fastapi import Request
 from pydantic import SecretStr
@@ -30,6 +30,26 @@ class ProviderUnavailable(ProviderError):
     """The provider could not answer: network error, timeout, 5xx or 429."""
 
 
+class ProviderRejected(ProviderError):
+    """The provider refused the request for the account's credit or plan (HTTP 402 or 403
+    on a run call): e.g. exhausted credit, or a token not allowed to run the actor. Story 2.4
+    turns this into a pause."""
+
+
+RunStatus = Literal["READY", "RUNNING", "SUCCEEDED", "FAILED", "TIMED-OUT", "ABORTED"]
+TERMINAL_FAILURES: frozenset[str] = frozenset({"FAILED", "TIMED-OUT", "ABORTED"})
+
+
+@dataclass(frozen=True)
+class RunState:
+    """A provider run as last seen. ``usage_usd`` is the cost so far (None when unknown);
+    ``dataset_id`` holds the run's items."""
+
+    status: RunStatus
+    usage_usd: float | None
+    dataset_id: str | None
+
+
 @dataclass(frozen=True)
 class ProviderAccount:
     """The provider account a token belongs to. ``user_id`` is None when the token is
@@ -43,6 +63,34 @@ class ProviderRunner(Protocol):
     async def validate_token(self, token: SecretStr) -> ProviderAccount:
         """Check ``token`` with the provider. Raises :class:`ProviderKeyInvalid` when the
         provider rejects it and :class:`ProviderUnavailable` when it cannot answer."""
+        ...
+
+    async def start_run(
+        self,
+        token: SecretStr,
+        actor: str,
+        run_input: dict[str, Any],
+        *,
+        max_items: int,
+        max_charge_usd: float,
+    ) -> str:
+        """Start ``actor`` (``owner/name``) asynchronously with ``run_input`` and the caps;
+        returns the provider run id. Never waits for the run."""
+        ...
+
+    async def get_run(self, token: SecretStr, run_id: str) -> RunState:
+        """The run's current status, cost and dataset."""
+        ...
+
+    async def fetch_items(
+        self, token: SecretStr, dataset_id: str, *, limit: int
+    ) -> list[dict[str, Any]]:
+        """At most ``limit`` items of the dataset (raw provider output: map, never store)."""
+        ...
+
+    async def abort_run(self, token: SecretStr, run_id: str) -> None:
+        """Ask the provider to abort the run so it stops billing. Best effort and idempotent:
+        never raises for a provider error (it is logged)."""
         ...
 
 
@@ -60,6 +108,30 @@ class LazyProviderRunner:
 
     async def validate_token(self, token: SecretStr) -> ProviderAccount:
         return await self._get().validate_token(token)
+
+    async def start_run(
+        self,
+        token: SecretStr,
+        actor: str,
+        run_input: dict[str, Any],
+        *,
+        max_items: int,
+        max_charge_usd: float,
+    ) -> str:
+        return await self._get().start_run(
+            token, actor, run_input, max_items=max_items, max_charge_usd=max_charge_usd
+        )
+
+    async def get_run(self, token: SecretStr, run_id: str) -> RunState:
+        return await self._get().get_run(token, run_id)
+
+    async def fetch_items(
+        self, token: SecretStr, dataset_id: str, *, limit: int
+    ) -> list[dict[str, Any]]:
+        return await self._get().fetch_items(token, dataset_id, limit=limit)
+
+    async def abort_run(self, token: SecretStr, run_id: str) -> None:
+        await self._get().abort_run(token, run_id)
 
 
 _installed: ProviderRunner | None = None

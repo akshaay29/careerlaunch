@@ -1,14 +1,17 @@
-"""listings.models: ``sources`` and ``listings`` (DDL in migration 0011_listings).
+"""listings.models: ``sources`` and ``listings`` (DDL in migration 0011_listings) and
+``provider_runs`` (0013_provider_runs).
 
-Both are global tables with no ``owner_id`` (AD-5). Foreign keys are declared in the
+``sources`` and ``listings`` are global tables with no ``owner_id`` (AD-5). Foreign keys are declared in the
 migration (AD-2: no ORM link into another module's table).
 """
 
 import uuid
 from datetime import date, datetime
+from decimal import Decimal
+from typing import Any
 
-from sqlalchemy import Boolean, Date, DateTime, Float, Integer, Text, func
-from sqlalchemy.dialects.postgresql import ARRAY, TSVECTOR
+from sqlalchemy import Boolean, Date, DateTime, Float, Integer, Numeric, Text, func
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TSVECTOR
 from sqlalchemy.orm import Mapped, deferred, mapped_column
 
 from app.core.db import Base
@@ -54,3 +57,36 @@ class Listing(Base):
     pin_count: Mapped[int] = mapped_column(Integer, server_default="0")
     relevance: Mapped[float] = mapped_column(Float, server_default="0")
     expired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ProviderRun(Base):
+    """One attempted provider run (AD-12), written only by ``listings.service``.
+    ``owner_id`` NULL is the System seed run. Ids, caps, counts and cost only: never the
+    token or a raw item."""
+
+    __tablename__ = "provider_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid7)
+    owner_id: Mapped[uuid.UUID | None] = mapped_column()
+    purpose: Mapped[str] = mapped_column(Text)
+    run_key: Mapped[str] = mapped_column(Text)
+    actor: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text)
+    apify_run_id: Mapped[str | None] = mapped_column(Text)
+    dataset_id: Mapped[str | None] = mapped_column(Text)
+    params: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default="{}")
+    max_items: Mapped[int] = mapped_column(Integer)
+    max_charge_usd: Mapped[Decimal] = mapped_column(Numeric(10, 4))
+    cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(12, 6))
+    items: Mapped[int | None] = mapped_column(Integer)
+    ingested: Mapped[int | None] = mapped_column(Integer)
+    rejected: Mapped[int | None] = mapped_column(Integer)
+    duplicates: Mapped[int | None] = mapped_column(Integer)
+    not_visible: Mapped[int | None] = mapped_column(Integer)
+    error_kind: Mapped[str | None] = mapped_column(Text)
+    poll_attempts: Mapped[int] = mapped_column(Integer, server_default="0")
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )

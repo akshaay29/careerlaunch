@@ -58,3 +58,17 @@ services:
         sync: false
       - key: APIFY_INTEGRATION_PLATFORM
         value: careerlaunch
+      # Collection (Story 2.3): allowlisted actors (first one runs), cadence, per-run caps and
+      # the platform kill switch.
+      - key: APIFY_ACTOR_ALLOWLIST
+        value: curious_coder/linkedin-jobs-scraper,harvestapi/linkedin-job-search
+      - key: COLLECT_INTERVAL_HOURS
+        value: "24"
+      - key: COLLECT_LOCAL_HOUR
+        value: "6"
+      - key: COLLECT_MAX_ITEMS
+        value: "100"
+      - key: COLLECT_MAX_CHARGE_USD
+        value: "0.25"
+      - key: PROVIDER_RUNS_ENABLED
+        value: "true"

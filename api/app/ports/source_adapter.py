@@ -5,14 +5,15 @@ A Source (LinkedIn via Apify in Story 2.3, Manual in Epic 4, ...) maps its raw o
 through ``listings.service.ingest_draft``, which keeps only the minimal Listing fields and
 discards the description (AD-7).
 
-Callers pass the adapter in (no process-wide install yet). In-memory fake:
+Callers pass a ``SourceAdapter`` in. A :class:`ProviderSource` (the Apify LinkedIn mapping) is
+installed process-wide by app wiring (``install_provider_source``). In-memory fake:
 ``tests/fakes/source_adapter.py``.
 """
 
 import re
 from collections.abc import AsyncIterator
 from datetime import UTC, date, datetime
-from typing import Annotated, Literal, Protocol, runtime_checkable
+from typing import Annotated, Any, Literal, Protocol, runtime_checkable
 from urllib.parse import urlsplit
 
 from pydantic import (
@@ -131,3 +132,43 @@ class SourceAdapter(Protocol):
     def collect(self, query: SourceQuery) -> AsyncIterator[ListingDraft]:
         """Yield the drafts matching ``query`` (at most ``query.limit``)."""
         ...
+
+
+@runtime_checkable
+class ProviderSource(Protocol):
+    """A Source collected through provider runs (LinkedIn via Apify actors, Story 2.3).
+
+    The run is started and polled by ``listings.service`` through the ProviderRunner port;
+    this half builds each allowlisted actor's input from a :class:`SourceQuery` and maps the
+    actor's raw items to drafts. Raw items are never stored.
+    """
+
+    source: str
+
+    def run_input(self, actor: str, query: SourceQuery) -> dict[str, Any]:
+        """The actor input for ``query`` (never a cookie, login or session field). Raises
+        ``ValueError`` for an actor it cannot drive."""
+        ...
+
+    def drafts_from_items(
+        self, actor: str, items: list[dict[str, Any]]
+    ) -> tuple[list[ListingDraft], int]:
+        """``(drafts, rejected_count)``: an unusable item is counted, never raised."""
+        ...
+
+
+_provider_source: ProviderSource | None = None
+
+
+def install_provider_source(source: ProviderSource) -> None:
+    """Make ``source`` the process-wide ProviderSource (app wiring, scripts)."""
+    global _provider_source
+    _provider_source = source
+
+
+def get_provider_source() -> ProviderSource:
+    if _provider_source is None:
+        raise RuntimeError(
+            "No ProviderSource is installed (app wiring calls install_provider_source)"
+        )
+    return _provider_source
