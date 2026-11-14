@@ -2,6 +2,7 @@
 
 import base64
 import ipaddress
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal, Self
@@ -14,6 +15,9 @@ API_DIR = Path(__file__).resolve().parents[2]
 REPO_DIR = API_DIR.parent
 
 LOCAL_DATABASE_URL = "postgresql+psycopg://postgres:postgres@127.0.0.1:54322/postgres"
+
+# An Apify actor name, ``owner/name`` (shared with the Apify adapter).
+ACTOR_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}/[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
 
 
 class Settings(BaseSettings):
@@ -71,6 +75,23 @@ class Settings(BaseSettings):
     )
     apify_api_base: str = "https://api.apify.com"
 
+    # Collection (Story 2.3, AD-12). Allowlisted actors, comma-separated, in order of use: the
+    # first one runs; reorder to switch to the fallback. ``owner/name`` each.
+    apify_actor_allowlist: str = (
+        "curious_coder/linkedin-jobs-scraper,harvestapi/linkedin-job-search"
+    )
+    # Hours between a Student's scheduled collection runs.
+    collect_interval_hours: int = Field(default=24, ge=24, le=24 * 7)
+    # Scheduled runs happen at this hour in the Student's time zone.
+    collect_local_hour: int = Field(default=6, ge=0, le=23)
+    # Every run sets these caps on Apify (maxItems, maxTotalChargeUsd).
+    collect_max_items: int = Field(default=100, ge=1, le=1000)
+    collect_max_charge_usd: float = Field(default=0.25, gt=0, le=50)
+    # Platform kill switch: false refuses every new provider run.
+    provider_runs_enabled: bool = True
+    # The owner's Apify token, used ONLY by scripts/seed_pool.py.
+    seed_apify_token: SecretStr | None = None
+
     @field_validator(
         "migration_database_url",
         "drain_secret",
@@ -78,6 +99,7 @@ class Settings(BaseSettings):
         "supabase_jwt_secret",
         "supabase_service_role_key",
         "credentials_master_keys",
+        "seed_apify_token",
         mode="before",
     )
     @classmethod
@@ -113,6 +135,19 @@ class Settings(BaseSettings):
                 "local or ci)"
             )
         return self
+
+    @field_validator("apify_actor_allowlist", mode="after")
+    @classmethod
+    def _actor_names(cls, v: str) -> str:
+        for actor in (a.strip() for a in v.split(",")):
+            if actor and not ACTOR_RE.fullmatch(actor):
+                raise ValueError("APIFY_ACTOR_ALLOWLIST entries must look like 'owner/name'")
+        return v
+
+    @property
+    def apify_actors(self) -> tuple[str, ...]:
+        """The allowlisted actors, in order (empty: no run can start)."""
+        return tuple(a.strip() for a in self.apify_actor_allowlist.split(",") if a.strip())
 
     @model_validator(mode="after")
     def _prod_needs_real_supabase(self) -> Self:

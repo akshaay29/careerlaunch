@@ -1,14 +1,16 @@
-"""listings.repo: SQL for the ``sources`` and ``listings`` tables only (AD-2)."""
+"""listings.repo: SQL for the ``sources``, ``listings`` and ``provider_runs`` tables only
+(AD-2)."""
 
 import uuid
 from dataclasses import dataclass
 from datetime import date, datetime
+from typing import Any
 
-from sqlalchemy import or_, select, text, tuple_
+from sqlalchemy import or_, select, text, tuple_, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.listings.models import Listing, Source
+from app.modules.listings.models import Listing, ProviderRun, Source
 
 
 async def get_source(session: AsyncSession, source_id: str) -> Source | None:
@@ -46,6 +48,7 @@ _AUTH = (
 _DEADLINE = "COALESCE(EXCLUDED.deadline, l.deadline)"
 _UPSERT = text(
     f"""
+    WITH seen AS (SELECT clock_timestamp() AS ts)
     INSERT INTO listings AS l (
         id, source, source_job_id, url, title, company, location, job_type,
         posted_at, deadline, skills, vocab_version, search_doc,
@@ -58,7 +61,9 @@ _UPSERT = text(
           || setweight(to_tsvector('english'::regconfig, CAST(:company AS text)), 'B')
           || setweight(to_tsvector('english'::regconfig, CAST(:skill_labels AS text)), 'C')
           || setweight(to_tsvector('english'::regconfig, CAST(:description AS text)), 'D'),
-        clock_timestamp(), clock_timestamp(),
+        -- One clock reading for both columns, so a new row has first_seen_at = last_seen_at
+        -- exactly (two clock_timestamp() calls could differ by a microsecond).
+        (SELECT ts FROM seen), (SELECT ts FROM seen),
         CAST(:collected_by AS uuid),
         CASE WHEN CAST(:contributes AS boolean) THEN NULL ELSE CAST(:collected_by AS uuid) END
     )
@@ -200,3 +205,60 @@ async def get_visible(
     )
     row = (await session.execute(stmt)).one_or_none()
     return (row[0], row[1]) if row is not None else None
+
+
+# --------------------------------------------------------------------------- provider runs
+
+
+async def lock_run_key(session: AsyncSession, run_key: str) -> None:
+    """Serialise every writer of ``run_key`` until the transaction ends."""
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtextextended(:k, 0))"), {"k": run_key}
+    )
+
+
+async def get_run_by_key(session: AsyncSession, run_key: str) -> ProviderRun | None:
+    stmt = (
+        select(ProviderRun)
+        .where(ProviderRun.run_key == run_key)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def get_run(
+    session: AsyncSession, run_id: uuid.UUID, *, for_update: bool = False
+) -> ProviderRun | None:
+    stmt = select(ProviderRun).where(ProviderRun.id == run_id)
+    if for_update:
+        stmt = stmt.with_for_update()
+    stmt = stmt.execution_options(populate_existing=True)
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def insert_run(session: AsyncSession, **values: Any) -> ProviderRun:
+    run = ProviderRun(id=uuid.uuid7(), **values)
+    session.add(run)
+    await session.flush()
+    await session.refresh(run)
+    return run
+
+
+async def update_run(session: AsyncSession, run_id: uuid.UUID, **values: Any) -> None:
+    await session.execute(update(ProviderRun).where(ProviderRun.id == run_id).values(**values))
+
+
+async def stale_runs(
+    session: AsyncSession, status: str, before: datetime, limit: int
+) -> list[tuple[uuid.UUID, uuid.UUID | None, str | None]]:
+    """``(id, owner_id, apify_run_id)`` of rows in ``status`` created (``starting``) or
+    started (``running``) before ``before``, oldest first."""
+    column = ProviderRun.started_at if status == "running" else ProviderRun.created_at
+    stmt = (
+        select(ProviderRun.id, ProviderRun.owner_id, ProviderRun.apify_run_id)
+        .where(ProviderRun.status == status, column < before)
+        .order_by(column)
+        .limit(limit)
+    )
+    return [(r.id, r.owner_id, r.apify_run_id) for r in (await session.execute(stmt)).all()]

@@ -333,7 +333,7 @@ Supabase dashboard → Authentication:
 ## Provider Key (FR-28, AD-6, AD-12, Story 2.2)
 
 - **What it is:** each Student's own scoped Apify token. Collection (Story 2.3) runs under it,
-  billed to the Student's Apify account. Settings page: `/settings/provider-key`.
+  billed to the Student's Apify account (see Collection below). Settings page: `/settings/provider-key`.
 - **API:** `GET /api/v1/provider-key` returns `{provider, has_key, last4, validated_at,
   needs_reentry}` (`needs_reentry`: the key was sealed with a master-key version that is no
   longer configured, so the Student must enter it again). `PUT` takes `{token}` (trimmed,
@@ -372,6 +372,69 @@ Supabase dashboard → Authentication:
   still decrypt with the version in their blob (`provider_credentials.key_version`). Drop the
   old version only after no row has `key_version` = 1 (a re-encryption job is not built yet;
   Students replacing their key, or a one-off script using `decrypt`/`encrypt`, moves rows).
+
+
+## Collection (FR-6, AD-4, AD-12, Story 2.3)
+
+- **Trigger and cadence:** saving a Provider Key (the `ProviderKeyChanged` subscriber in
+  `listings.events`) creates or resumes the Student's `schedules` row (`kind`
+  `listings.collect`, every `COLLECT_INTERVAL_HOURS` (at least 24), next run at
+  `COLLECT_LOCAL_HOUR`:00 (default 6) in the Student's time zone; re-saving the key never
+  pushes back an active schedule) and enqueues a
+  first `listings.collect:student:<id>:<local_date>` job, so fresh Listings arrive within
+  a few drains. After that `scheduler_tick` enqueues `listings.collect` once per interval.
+  Deleting the key or withdrawing `provider_runs` consent pauses the schedule (Story 2.2).
+- **One run per Student per local day:** `listings.collect` reads the Student's Preferences
+  (no role titles: `listings.collect_skipped` with `no_preferences`, no run) and calls
+  `listings.service.start_provider_run` with `run_key` `collect:<id>:<local_date>` (the day
+  in the Student's time zone, `core.clock.local_day`). A second call for the same key never
+  starts a second Apify run.
+- **The one spend path:** `start_provider_run` re-checks `provider_runs` consent,
+  `provider_status` (paused, or credit `exhausted_until` in the future), the kill switch
+  `PROVIDER_RUNS_ENABLED`, `sources.enabled` for `linkedin` and that a key exists. A failure
+  stores the `provider_runs` row as `refused` with an `error_kind`. Otherwise it commits the
+  row as `starting`, then (no transaction open) decrypts the key and starts the first actor
+  of `APIFY_ACTOR_ALLOWLIST` with `maxItems=COLLECT_MAX_ITEMS` (100) and
+  `maxTotalChargeUsd=COLLECT_MAX_CHARGE_USD` (0.25), then stores the Apify run id
+  (`running`) and enqueues `listings.poll_provider_run` 60 s later. A row left `starting`
+  without a run id is another start in flight for 10 minutes (a no-op); after that it is a
+  crash mid-start, becomes `failed`/`start_unknown` and is never restarted: better to miss a
+  day than to pay twice. If the row was failed while our Apify call was in flight, the new
+  run is aborted and recorded as `listings.provider_run_orphaned`. A start error is `failed` and is not
+  retried; the next scheduled run collects again.
+- **Polling:** the poll job never waits on Apify. While the run is READY/RUNNING it
+  re-enqueues itself after 2, 4, 8, then every 10 minutes; after 3 hours the run is
+  `failed`/`timeout` and aborted at Apify (best effort). On SUCCEEDED it fetches at most `max_items` items, maps them
+  (`adapters/apify/linkedin_source.py`; bad items are counted as `rejected`) and ingests them
+  through the Story 2.1 pipeline (`ingest_drafts`: pool or private per `pool_contribution`
+  consent, descriptions discarded), then records the cost (`cost_usd`), the counts and
+  `succeeded` plus a `listings.provider_run_succeeded` ops event. FAILED/ABORTED/TIMED-OUT is
+  recorded as `failed` with its cost and never re-run. A transient Apify error raises, so the
+  job's retry policy backs off. Counts satisfy `items = ingested + rejected + duplicates +
+  not_visible`.
+- **Reaper:** a global hourly `schedules` row (migration 0013) runs
+  `listings.reap_stale_runs`: `starting` rows older than 15 minutes become
+  `failed`/`start_unknown`, and `running` rows started more than 4 hours ago become
+  `failed`/`poll_exhausted` after a best-effort abort.
+- **Actors:** `curious_coder/linkedin-jobs-scraper` (primary, from about USD 1 per 1,000
+  results) and `harvestapi/linkedin-job-search` (fallback; its optional `cookie` input is
+  never set). Reorder `APIFY_ACTOR_ALLOWLIST` to switch. No cookie, login or session input is
+  ever sent.
+- **Costs:** every run is billed to the Student's own Apify account, capped at
+  `COLLECT_MAX_CHARGE_USD` and `COLLECT_MAX_ITEMS` per run; at the defaults a daily run costs
+  at most USD 0.25 (typically about USD 0.10 for 100 results), well inside Apify's USD 5 of
+  free monthly credit. Usage UI, monthly caps and pause-on-failure are Story 2.4.
+- **Kill switch:** set `PROVIDER_RUNS_ENABLED=false` in Render to refuse every new run
+  (rows are stored as `refused`/`disabled`); runs already started still finish and are
+  ingested. Disabling the `linkedin` Source (`app.sources.enabled`) refuses runs too.
+- **Seeding the pool before launch:** with the owner's own Apify token in
+  `SEED_APIFY_TOKEN` (never in Render), run from `api/`:
+  `uv run python scripts/seed_pool.py --role "Backend Engineering Intern" --location
+  "Bengaluru, Karnataka, India" --max-items 50` (repeat `--role`/`--location`, optional
+  `--job-type internship|full_time`, `--max-charge-usd` up to 2). It refuses to run without the token (exit code 2),
+  starts one run through the same spend path as the System (`owner_id` NULL,
+  `run_key` `seed:<uuid>`, every Listing goes to the pool), polls it from the script and
+  prints the counts and the cost.
 
 ## CI (`.github/workflows/ci.yml`)
 
