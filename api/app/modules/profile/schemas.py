@@ -19,7 +19,7 @@ from pydantic import (
 )
 
 from app.core import degrees
-from app.modules.profile.files import ResumeContentType
+from app.modules.profile.files import DocumentContentType, ResumeContentType
 
 # Limits on Skill Profile edits (FR-4).
 MAX_SKILL_TERM_CHARS = 50
@@ -45,6 +45,34 @@ class ResumeList(BaseModel):
 
 
 class ResumeDownload(BaseModel):
+    """A signed URL that downloads the file as an attachment; it stops working at
+    ``expires_at`` (5 minutes or less)."""
+
+    url: str
+    expires_at: datetime
+
+
+# --------------------------------------------------------------------------- Documents
+
+
+class DocumentOut(BaseModel):
+    """One stored Document. ``filename`` is untrusted text: render it as plain text."""
+
+    id: uuid.UUID
+    filename: str
+    content_type: DocumentContentType
+    size_bytes: int
+    created_at: datetime
+
+
+class DocumentList(BaseModel):
+    """Newest first. Pass ``next_cursor`` as ``cursor`` to get the next page (null = done)."""
+
+    items: list[DocumentOut]
+    next_cursor: uuid.UUID | None
+
+
+class DocumentDownload(BaseModel):
     """A signed URL that downloads the file as an attachment; it stops working at
     ``expires_at`` (5 minutes or less)."""
 

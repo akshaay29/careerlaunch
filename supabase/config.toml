@@ -131,6 +131,7 @@ file_size_limit = "5MiB"
 allowed_mime_types = [
   "application/pdf",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "text/plain",
 ]
 
 # Uncomment to configure local storage buckets

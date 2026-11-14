@@ -3,6 +3,11 @@
 Resume versions (FR-3): upload, list, activate, download (signed URL) and delete. Every
 ``{resume_id}`` route answers 404 for another Student's id and for an unknown id.
 
+Documents (FR-26): upload (PDF, DOCX or plain text), list, download (signed URL) and delete,
+on the same file helpers as Resumes. Every ``{document_id}`` route answers 404 for another
+Student's id and for an unknown id. Delete starts the after-response drain that removes the
+object.
+
 Skill Profile (FR-4): read, edit (add / remove / remove custom), reset, and vocabulary
 suggestions. Upload, activate, edit and reset start the bounded after-response drain of the
 ``priority`` queue (AD-4 priority path), which runs the extraction job.
@@ -14,6 +19,7 @@ starts the same after-response drain.
 
 import logging
 import uuid
+from collections.abc import Awaitable, Callable
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Query, Response, UploadFile, status
@@ -26,9 +32,12 @@ from app.core.db import get_session
 from app.core.jobs import PRIORITY_QUEUE, drain
 from app.modules.profile import service
 from app.modules.profile.files import MAX_FILE_BYTES
-from app.modules.profile.models import Preferences, Resume, SkillProfile
+from app.modules.profile.models import Document, Preferences, Resume, SkillProfile
 from app.modules.profile.schemas import (
     DegreeOut,
+    DocumentDownload,
+    DocumentList,
+    DocumentOut,
     PreferencesIn,
     PreferencesOut,
     ProfileSkill,
@@ -64,6 +73,24 @@ async def drain_priority() -> None:
         logger.exception("priority_drain_failed")
 
 
+async def _read_upload(file: UploadFile) -> bytes:
+    try:
+        # One byte over the limit is enough to know it is too large.
+        return await file.read(MAX_FILE_BYTES + 1)
+    finally:
+        await file.close()
+
+
+async def _commit_upload(session: AsyncSession, discard: Callable[[], Awaitable[None]]) -> None:
+    """Commit an upload's unit of work; if the commit fails (or the request is cancelled),
+    ``discard`` deletes the already stored file."""
+    try:
+        await session.commit()
+    except BaseException:  # cancellation too: never orphan a private file
+        await discard()
+        raise
+
+
 def _version(resume: Resume) -> ResumeVersion:
     return ResumeVersion.model_validate(resume, from_attributes=True)
 
@@ -88,11 +115,7 @@ async def upload_resume(
 ) -> ResumeVersion:
     """Upload a new Resume version. The type is read from the file's content. It becomes
     the active version only when the Student has no active Resume."""
-    try:
-        # One byte over the limit is enough to know it is too large.
-        data = await file.read(MAX_FILE_BYTES + 1)
-    finally:
-        await file.close()
+    data = await _read_upload(file)
     resume = await service.upload_resume(
         session,
         store,
@@ -101,11 +124,7 @@ async def upload_resume(
         data=data,
         max_versions=get_settings().resume_max_versions,
     )
-    try:
-        await session.commit()
-    except BaseException:  # cancellation too: never orphan a private file
-        await service.discard_upload(store, resume)
-        raise
+    await _commit_upload(session, lambda: service.discard_upload(store, resume))
     # A first (active) upload enqueued the Skill Profile extraction.
     background.add_task(drain_priority)
     return _version(resume)
@@ -165,6 +184,92 @@ async def delete_resume(
     """Delete a version. Its file is removed by a background job started right after the
     response. Deleting the active version leaves no version active."""
     await service.delete_resume(session, actor.id, resume_id)
+    await session.commit()
+    background.add_task(drain_priority)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# --------------------------------------------------------------------------- Documents
+
+_DOCUMENT_NOT_FOUND = {404: {"description": "No such Document for this Student", **_PROBLEM}}
+
+
+def _document(document: Document) -> DocumentOut:
+    return DocumentOut.model_validate(document, from_attributes=True)
+
+
+@router.post(
+    "/documents",
+    status_code=status.HTTP_201_CREATED,
+    response_model=DocumentOut,
+    operation_id="uploadDocument",
+    responses={
+        409: {"description": "The Document cap is reached", **_PROBLEM},
+        413: {"description": "The file is larger than 5 MB", **_PROBLEM},
+        415: {"description": "The file is not a PDF, DOCX or plain-text file", **_PROBLEM},
+    },
+)
+async def upload_document(
+    file: Annotated[
+        UploadFile, File(description="A PDF, DOCX or plain-text file of 5 MB or less")
+    ],
+    actor: CurrentActor,
+    session: Session,
+    store: Store,
+) -> DocumentOut:
+    """Store a Document (cover letter, transcript, certificate...). The type is read from the
+    file's content."""
+    data = await _read_upload(file)
+    document = await service.upload_document(
+        session,
+        store,
+        actor.id,
+        filename=file.filename,
+        data=data,
+        max_count=get_settings().document_max_count,
+    )
+    await _commit_upload(session, lambda: service.discard_document_upload(store, document))
+    return _document(document)
+
+
+@router.get("/documents", response_model=DocumentList, operation_id="listDocuments")
+async def list_documents(
+    actor: CurrentActor,
+    session: Session,
+    limit: Annotated[int, Query(ge=1, le=50)] = 20,
+    cursor: Annotated[uuid.UUID | None, Query()] = None,
+) -> DocumentList:
+    page = await service.list_documents(session, actor.id, limit=limit, cursor=cursor)
+    return DocumentList(items=[_document(d) for d in page.items], next_cursor=page.next_cursor)
+
+
+@router.get(
+    "/documents/{document_id}/download",
+    response_model=DocumentDownload,
+    operation_id="getDocumentDownload",
+    responses=_DOCUMENT_NOT_FOUND,
+)
+async def get_document_download(
+    document_id: uuid.UUID, actor: CurrentActor, session: Session, store: Store
+) -> DocumentDownload:
+    """A signed URL (5 minutes or less) that downloads the file as an attachment."""
+    link = await service.document_download_link(session, store, actor.id, document_id)
+    return DocumentDownload(url=link.url, expires_at=link.expires_at)
+
+
+@router.delete(
+    "/documents/{document_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    operation_id="deleteDocument",
+    responses=_DOCUMENT_NOT_FOUND,
+)
+async def delete_document(
+    document_id: uuid.UUID, actor: CurrentActor, session: Session, background: BackgroundTasks
+) -> Response:
+    """Delete a Document. Its file is removed by a background job started right after the
+    response."""
+    await service.delete_document(session, actor.id, document_id)
     await session.commit()
     background.add_task(drain_priority)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

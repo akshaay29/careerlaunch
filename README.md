@@ -221,8 +221,8 @@ Supabase dashboard → Authentication:
   (`app/ports/file_store.py`), implemented by `app/adapters/supabase_storage/` (Storage REST
   API over `httpx`, service-role key `SUPABASE_SERVICE_ROLE_KEY`). Tests use the in-memory
   fake in `api/tests/fakes/file_store.py`.
-- **Bucket:** locally `supabase/config.toml` declares `[storage.buckets.private]` (private, PDF/DOCX MIME types only,
-  5 MiB limit). `npx supabase start` creates it on a fresh stack; on a stack that already
+- **Bucket:** locally `supabase/config.toml` declares `[storage.buckets.private]` (private, PDF/DOCX/plain-text MIME
+  types only, 5 MiB limit). `npx supabase start` creates it on a fresh stack; on a stack that already
   existed, run `npx supabase seed buckets` or `uv run python scripts/ensure_bucket.py`. Hosted, `api/scripts/ensure_bucket.py`
   creates it if missing (idempotent, never public); `migrate-deploy.yml` runs it after the
   migrations, so add the GitHub `production` secrets `SUPABASE_URL` and
@@ -240,6 +240,23 @@ Supabase dashboard → Authentication:
   now; the object is removed by the `profile.delete_stored_files` job, drained right after
   the response). Another Student's id is a 404.
 - **Web:** onboarding step 2 (after consent) and `/settings/resumes`.
+
+## Documents (Story 1.8)
+
+- Other application files (cover letters, transcripts, certificates) on the same file path
+  as Resumes: stored at `<owner_id>/document/<id>`, table `app.documents`. Accepted: PDF,
+  DOCX or UTF-8 plain text, 5 MB or smaller. PDF and DOCX are sniffed as for Resumes; plain
+  text (`text/plain`) is accepted only when it is non-empty,
+  strict UTF-8 (a leading BOM allowed), has no NUL byte and no control characters other than
+  tab, LF, CR and FF. Up to 5 MB (413 / 415 "Upload a PDF, DOCX or plain-text file"). At most
+  `DOCUMENT_MAX_COUNT` (default 20) per Student (409 "Delete an old document first"). The
+  stored name's extension always matches the sniffed type (`.pdf`; `.docx`; `.txt`, `.md`,
+  `.csv` or `.log` for text), appended when missing (`cover.html` -> `cover.html.txt`).
+- **API:** `POST /api/v1/documents` (multipart `file`), `GET /api/v1/documents` (`limit`,
+  `cursor`), `GET /api/v1/documents/{id}/download` (`{url, expires_at}`) and
+  `DELETE /api/v1/documents/{id}` (the object is removed by the
+  `profile.delete_document_file` job). No events are published. Another Student's id is a 404.
+- **Web:** `/settings/documents`.
 
 ## CI (`.github/workflows/ci.yml`)
 

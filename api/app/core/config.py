@@ -57,6 +57,8 @@ class Settings(BaseSettings):
     storage_bucket: str = Field(default="private", pattern=r"^[a-z0-9][a-z0-9_-]{1,62}$")
     # Resume versions a Student may keep (FR-3); one more upload is a 409.
     resume_max_versions: int = Field(default=10, ge=1, le=100)
+    # Documents a Student may keep (FR-26); one more upload is a 409.
+    document_max_count: int = Field(default=20, ge=1, le=100)
 
     @field_validator(
         "migration_database_url",

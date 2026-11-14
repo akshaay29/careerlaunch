@@ -1,5 +1,5 @@
-"""profile.models: ``resumes`` (DDL in 0006_resumes), ``skill_profiles`` (0007) and
-``preferences`` (0008)."""
+"""profile.models: ``resumes`` (DDL in 0006_resumes), ``skill_profiles`` (0007),
+``preferences`` (0008) and ``documents`` (0009)."""
 
 import uuid
 from datetime import datetime
@@ -28,6 +28,24 @@ class Resume(Base):
     size_bytes: Mapped[int] = mapped_column(Integer)
     sha256: Mapped[str] = mapped_column(Text)
     is_active: Mapped[bool] = mapped_column(Boolean, server_default="false")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class Document(Base):
+    """One stored Document (FR-26): a cover letter, transcript, certificate... ``id`` is also
+    the Storage object id (``<owner_id>/document/<id>``)."""
+
+    __tablename__ = "documents"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid7)
+    # FK to accounts(id) ON DELETE CASCADE is declared in the migration.
+    owner_id: Mapped[uuid.UUID] = mapped_column()
+    filename: Mapped[str] = mapped_column(Text)
+    content_type: Mapped[str] = mapped_column(Text)
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    sha256: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

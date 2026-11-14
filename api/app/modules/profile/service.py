@@ -1,16 +1,24 @@
-"""profile.service: Resume versions (FR-3, Files convention).
+"""profile.service: Resume versions (FR-3) and Documents (FR-26), Files convention.
 
 Takes the session and the FileStore; never commits (routers do).
 
-* Upload: size (5 MiB) and content-type sniffing, then the version cap, then the file is
-  stored at ``<owner_id>/resume/<id>`` and THEN the row is inserted. If the insert (or the
-  caller's commit, via :func:`discard_upload`) fails, the stored file is deleted (best
-  effort) and the error propagates. A Student without an active Resume gets the new upload
-  as the active one, which publishes ``ResumeActivated``.
-* Activation deactivates the current row, activates the new one and publishes
-  ``ResumeActivated`` in the caller's unit of work.
-* Delete removes the row and enqueues ``profile.delete_stored_files`` in the same
-  transaction, so the object is removed even if Storage is down right now.
+Private files (shared by Resumes and Documents):
+
+* Upload: size (5 MiB) and content-type sniffing, then the cap, then the file is stored at
+  ``<owner_id>/<kind>/<id>`` and THEN the row is inserted. If the insert (or the caller's
+  commit, via :func:`discard_upload` / :func:`discard_document_upload`) fails or the request
+  is cancelled, the stored file is deleted (best effort, shielded) and the error propagates.
+* Download is a signed URL (5 minutes or less) that downloads the file as an attachment
+  under its stored filename.
+* Delete removes the row and enqueues the object's deletion job in the same transaction, so
+  the object is removed even if Storage is down right now.
+
+Resumes: a Student without an active Resume gets the new upload as the active one, which
+publishes ``ResumeActivated``. Activation deactivates the current row, activates the new one
+and publishes ``ResumeActivated`` in the caller's unit of work.
+
+Documents: PDF, DOCX or plain text; at most ``DOCUMENT_MAX_COUNT``. They publish no events
+(Documents do not affect matching).
 
 Skill Profile (FR-4, AD-8):
 
@@ -31,6 +39,7 @@ import asyncio
 import hashlib
 import logging
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -51,14 +60,17 @@ from app.core.jobs import enqueue
 from app.modules.profile import repo
 from app.modules.profile.files import (
     MAX_FILE_BYTES,
+    FileKind,
+    document_filename,
     sanitize_filename,
+    sniff_document_type,
     sniff_resume_type,
     storage_path,
 )
 from app.modules.profile.extraction import ExtractionResult
-from app.modules.profile.models import Preferences, Resume, SkillProfile
+from app.modules.profile.models import Document, Preferences, Resume, SkillProfile
 from app.modules.profile.schemas import MAX_CUSTOM_SKILLS
-from app.modules.profile.tasks import DELETE_STORED_FILES, EXTRACT_RESUME
+from app.modules.profile.tasks import DELETE_DOCUMENT_FILE, DELETE_STORED_FILES, EXTRACT_RESUME
 from app.ports.file_store import FileStore
 
 logger = logging.getLogger("app.profile")
@@ -67,21 +79,28 @@ TOO_LARGE_DETAIL = "Resume must be 5 MB or smaller"
 WRONG_TYPE_DETAIL = "Upload a PDF or DOCX file"
 CAP_DETAIL = "Delete an old version first"
 NOT_FOUND_DETAIL = "No such Resume version."
+
+DOCUMENT_TOO_LARGE_DETAIL = "Document must be 5 MB or smaller"
+DOCUMENT_WRONG_TYPE_DETAIL = "Upload a PDF, DOCX or plain-text file"
+DOCUMENT_CAP_DETAIL = "Delete an old document first"
+DOCUMENT_NOT_FOUND_DETAIL = "No such Document."
+
 # Signed download URLs live at most 5 minutes (Files convention).
 DOWNLOAD_URL_TTL_SECONDS = 300
 
 
-def resume_path(owner_id: uuid.UUID, resume_id: uuid.UUID) -> str:
-    return storage_path(owner_id, "resume", resume_id)
+# --------------------------------------------------------------------------- private files
 
 
-def check_upload(data: bytes) -> str:
+def _check_file(
+    data: bytes, sniff: Callable[[bytes], str | None], *, too_large: str, wrong_type: str
+) -> str:
     """Validate an upload's bytes; returns its content type. Raises 413 / 415 errors."""
     if len(data) > MAX_FILE_BYTES:
-        raise PayloadTooLargeError(TOO_LARGE_DETAIL)
-    content_type = sniff_resume_type(data) if data else None
+        raise PayloadTooLargeError(too_large)
+    content_type = sniff(data) if data else None
     if content_type is None:
-        raise UnsupportedMediaTypeError(WRONG_TYPE_DETAIL)
+        raise UnsupportedMediaTypeError(wrong_type)
     return content_type
 
 
@@ -90,7 +109,7 @@ async def _delete_quietly(store: FileStore, path: str) -> None:
         await store.delete([path])
     except Exception:
         # Best effort: the object is unreachable without a row; log the id, not the name.
-        logger.exception("resume_upload_cleanup_failed", extra={"path": path})
+        logger.exception("upload_cleanup_failed", extra={"path": path})
 
 
 async def _discard(store: FileStore, path: str) -> None:
@@ -100,6 +119,67 @@ async def _discard(store: FileStore, path: str) -> None:
     except asyncio.CancelledError:
         # The caller was cancelled again while waiting; the shielded delete keeps running.
         pass
+
+
+async def _store_then_insert[T](
+    store: FileStore,
+    path: str,
+    data: bytes,
+    content_type: str,
+    insert: Callable[[], Awaitable[T]],
+) -> T:
+    """Store the object, then run ``insert`` (the row and anything else in the caller's unit
+    of work). On any failure, cancellation included, the stored object is discarded."""
+    try:
+        # Inside the try: put may fail AFTER the object was written (e.g. a read timeout).
+        await store.put(path, data, content_type)
+        return await insert()
+    except BaseException:  # cancellation too: never orphan a private file
+        await _discard(store, path)
+        raise
+
+
+@dataclass(frozen=True)
+class DownloadLink:
+    url: str
+    expires_at: datetime
+
+
+async def _signed_link(store: FileStore, path: str, filename: str) -> DownloadLink:
+    """A short-lived signed URL that downloads ``path`` as an attachment named ``filename``."""
+    # Computed before signing, so the stated expiry is never later than the real one.
+    expires_at = datetime.now(UTC) + timedelta(seconds=DOWNLOAD_URL_TTL_SECONDS)
+    url = await store.signed_download_url(path, DOWNLOAD_URL_TTL_SECONDS, filename)
+    return DownloadLink(url=url, expires_at=expires_at)
+
+
+async def _enqueue_file_deletion(
+    session: AsyncSession, task_name: str, kind: FileKind, file_id: uuid.UUID, **ids: uuid.UUID
+) -> None:
+    """Enqueue the deletion job of a deleted row's object, in the caller's transaction."""
+    await enqueue(session, task_name, f"{task_name}:{kind}:{file_id}", **ids)
+
+
+def _split_page[T: (Resume, Document)](
+    rows: list[T], limit: int
+) -> tuple[list[T], uuid.UUID | None]:
+    """``rows`` was fetched with ``limit + 1``: the page and its ``next_cursor``."""
+    items = rows[:limit]
+    return items, (items[-1].id if len(rows) > limit else None)
+
+
+# --------------------------------------------------------------------------- Resumes
+
+
+def resume_path(owner_id: uuid.UUID, resume_id: uuid.UUID) -> str:
+    return storage_path(owner_id, "resume", resume_id)
+
+
+def check_upload(data: bytes) -> str:
+    """Validate a Resume upload's bytes; returns its content type. Raises 413 / 415 errors."""
+    return _check_file(
+        data, sniff_resume_type, too_large=TOO_LARGE_DETAIL, wrong_type=WRONG_TYPE_DETAIL
+    )
 
 
 async def upload_resume(
@@ -123,10 +203,8 @@ async def upload_resume(
     becomes_active = not await repo.has_active(session, owner_id)
 
     resume_id = uuid.uuid7()
-    path = resume_path(owner_id, resume_id)
-    try:
-        # Inside the try: put may fail AFTER the object was written (e.g. a read timeout).
-        await store.put(path, data, content_type)
+
+    async def insert() -> Resume:
         resume = await repo.insert_resume(
             session,
             resume_id=resume_id,
@@ -139,10 +217,11 @@ async def upload_resume(
         )
         if becomes_active:
             await publish(session, ResumeActivated(owner_id=owner_id, resume_id=resume_id))
-    except BaseException:  # cancellation too: never orphan a private file
-        await _discard(store, path)
-        raise
-    return resume
+        return resume
+
+    return await _store_then_insert(
+        store, resume_path(owner_id, resume_id), data, content_type, insert
+    )
 
 
 async def discard_upload(store: FileStore, resume: Resume) -> None:
@@ -161,8 +240,7 @@ async def list_resumes(
 ) -> ResumePage:
     """The owner's versions, newest first. ``next_cursor`` is set when more may follow."""
     rows = await repo.list_page(session, owner_id, limit=limit + 1, before=cursor)
-    items = rows[:limit]
-    next_cursor = items[-1].id if len(rows) > limit else None
+    items, next_cursor = _split_page(rows, limit)
     return ResumePage(items=items, next_cursor=next_cursor)
 
 
@@ -189,23 +267,12 @@ async def activate_resume(
     return resume, True
 
 
-@dataclass(frozen=True)
-class DownloadLink:
-    url: str
-    expires_at: datetime
-
-
 async def download_link(
     session: AsyncSession, store: FileStore, owner_id: uuid.UUID, resume_id: uuid.UUID
 ) -> DownloadLink:
     """A short-lived signed URL that downloads the version as an attachment."""
     resume = await _owned(session, owner_id, resume_id)
-    # Computed before signing, so the stated expiry is never later than the real one.
-    expires_at = datetime.now(UTC) + timedelta(seconds=DOWNLOAD_URL_TTL_SECONDS)
-    url = await store.signed_download_url(
-        resume_path(owner_id, resume.id), DOWNLOAD_URL_TTL_SECONDS, resume.filename
-    )
-    return DownloadLink(url=url, expires_at=expires_at)
+    return await _signed_link(store, resume_path(owner_id, resume.id), resume.filename)
 
 
 async def delete_resume(session: AsyncSession, owner_id: uuid.UUID, resume_id: uuid.UUID) -> None:
@@ -218,12 +285,112 @@ async def delete_resume(session: AsyncSession, owner_id: uuid.UUID, resume_id: u
     deleted = await repo.delete_resume(session, owner_id, resume_id)
     if deleted is None:
         raise NotFoundError(NOT_FOUND_DETAIL)
-    await enqueue(
+    await _enqueue_file_deletion(
+        session, DELETE_STORED_FILES, "resume", resume_id, owner_id=owner_id, resume_id=resume_id
+    )
+
+
+# --------------------------------------------------------------------------- Documents
+
+
+def document_path(owner_id: uuid.UUID, document_id: uuid.UUID) -> str:
+    return storage_path(owner_id, "document", document_id)
+
+
+def check_document_upload(data: bytes) -> str:
+    """Validate a Document upload's bytes; returns its content type (PDF, DOCX or
+    ``text/plain``). Raises 413 / 415 errors."""
+    return _check_file(
+        data,
+        sniff_document_type,
+        too_large=DOCUMENT_TOO_LARGE_DETAIL,
+        wrong_type=DOCUMENT_WRONG_TYPE_DETAIL,
+    )
+
+
+async def upload_document(
+    session: AsyncSession,
+    store: FileStore,
+    owner_id: uuid.UUID,
+    *,
+    filename: str | None,
+    data: bytes,
+    max_count: int,
+) -> Document:
+    """Store a new Document and insert its row (not committed).
+
+    Raises :class:`PayloadTooLargeError`, :class:`UnsupportedMediaTypeError` or
+    :class:`ConflictError` (the cap) before anything is stored.
+    """
+    content_type = check_document_upload(data)
+    await repo.lock_owner_documents(session, owner_id)
+    if await repo.count_documents(session, owner_id) >= max_count:
+        raise ConflictError(DOCUMENT_CAP_DETAIL, extra={"max_count": max_count})
+
+    document_id = uuid.uuid7()
+
+    async def insert() -> Document:
+        return await repo.insert_document(
+            session,
+            document_id=document_id,
+            owner_id=owner_id,
+            filename=document_filename(filename, content_type),
+            content_type=content_type,
+            size_bytes=len(data),
+            sha256=hashlib.sha256(data).hexdigest(),
+        )
+
+    return await _store_then_insert(
+        store, document_path(owner_id, document_id), data, content_type, insert
+    )
+
+
+async def discard_document_upload(store: FileStore, document: Document) -> None:
+    """The caller's commit failed after :func:`upload_document`: delete the stored file."""
+    await _discard(store, document_path(document.owner_id, document.id))
+
+
+@dataclass(frozen=True)
+class DocumentPage:
+    items: list[Document]
+    next_cursor: uuid.UUID | None
+
+
+async def list_documents(
+    session: AsyncSession, owner_id: uuid.UUID, *, limit: int, cursor: uuid.UUID | None
+) -> DocumentPage:
+    """The owner's Documents, newest first. ``next_cursor`` is set when more may follow."""
+    rows = await repo.list_documents_page(session, owner_id, limit=limit + 1, before=cursor)
+    items, next_cursor = _split_page(rows, limit)
+    return DocumentPage(items=items, next_cursor=next_cursor)
+
+
+async def document_download_link(
+    session: AsyncSession, store: FileStore, owner_id: uuid.UUID, document_id: uuid.UUID
+) -> DownloadLink:
+    """A short-lived signed URL that downloads the Document as an attachment."""
+    document = await repo.get_document(session, owner_id, document_id)
+    if document is None:
+        # Another Student's id and an unknown id look the same (AD-5).
+        raise NotFoundError(DOCUMENT_NOT_FOUND_DETAIL)
+    return await _signed_link(store, document_path(owner_id, document.id), document.filename)
+
+
+async def delete_document(
+    session: AsyncSession, owner_id: uuid.UUID, document_id: uuid.UUID
+) -> None:
+    """Delete the row and enqueue the object's deletion in the same transaction."""
+    await repo.lock_owner_documents(session, owner_id)
+    deleted = await repo.delete_document(session, owner_id, document_id)
+    if deleted is None:
+        raise NotFoundError(DOCUMENT_NOT_FOUND_DETAIL)
+    await _enqueue_file_deletion(
         session,
-        DELETE_STORED_FILES,
-        f"{DELETE_STORED_FILES}:resume:{resume_id}",
+        DELETE_DOCUMENT_FILE,
+        "document",
+        document_id,
         owner_id=owner_id,
-        resume_id=resume_id,
+        document_id=document_id,
     )
 
 

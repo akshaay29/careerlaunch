@@ -12,6 +12,7 @@ from app.ports.file_store import get_file_store
 logger = logging.getLogger("app.profile")
 
 DELETE_STORED_FILES = "profile.delete_stored_files"
+DELETE_DOCUMENT_FILE = "profile.delete_document_file"
 EXTRACT_RESUME = "profile.extract_resume"
 
 # The row is already gone when this runs, so if every attempt fails the private file is
@@ -26,6 +27,13 @@ async def delete_stored_files(*, owner_id: uuid.UUID, resume_id: uuid.UUID) -> N
     already gone). Idempotent: deleting a missing object is not an error, so retries and
     duplicate runs are safe."""
     await get_file_store().delete([storage_path(owner_id, "resume", resume_id)])
+
+
+@task(DELETE_DOCUMENT_FILE, queue=PRIORITY_QUEUE, retry=DELETE_RETRY)
+async def delete_document_file(*, owner_id: uuid.UUID, document_id: uuid.UUID) -> None:
+    """Remove a deleted Document's object (FR-26), like :func:`delete_stored_files`: the path
+    is derived from the ids and the delete is idempotent."""
+    await get_file_store().delete([storage_path(owner_id, "document", document_id)])
 
 
 @task(EXTRACT_RESUME, queue=PRIORITY_QUEUE)

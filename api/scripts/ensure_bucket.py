@@ -5,8 +5,8 @@ Usage (from ``api/``)::
     uv run python scripts/ensure_bucket.py
 
 Idempotent: creates ``STORAGE_BUCKET`` (default ``private``) as a private bucket with a 5 MiB
-file size limit and PDF/DOCX as the only allowed MIME types when it is missing, and resets an existing bucket to private with that limit
-if it differs. It never makes a bucket public. Uses ``SUPABASE_URL`` and
+file size limit and PDF/DOCX/plain text as the only allowed MIME types when it is missing,
+and resets an existing bucket to private with that limit and those types if it differs. It never makes a bucket public. Uses ``SUPABASE_URL`` and
 ``SUPABASE_SERVICE_ROLE_KEY`` via Settings. Runs in migrate-deploy.yml after migrations; the
 local CLI stack declares the same bucket in ``supabase/config.toml``.
 """
@@ -19,8 +19,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.adapters.supabase_storage import from_settings  # noqa: E402
 from app.core.config import get_settings  # noqa: E402
-from app.modules.profile.files import DOCX, MAX_FILE_BYTES, PDF  # noqa: E402
+from app.modules.profile.files import DOCX, MAX_FILE_BYTES, PDF, TEXT  # noqa: E402
 from app.ports.file_store import FileStoreError  # noqa: E402
+
+# The same list as [storage.buckets.private] in supabase/config.toml.
+ALLOWED_MIME_TYPES = [PDF, DOCX, TEXT]
 
 
 async def run() -> int:
@@ -32,7 +35,7 @@ async def run() -> int:
         return 1
     try:
         outcome = await store.ensure_bucket(
-            file_size_limit=MAX_FILE_BYTES, allowed_mime_types=[PDF, DOCX]
+            file_size_limit=MAX_FILE_BYTES, allowed_mime_types=ALLOWED_MIME_TYPES
         )
     except FileStoreError as exc:
         print(f"ensure-bucket: {exc}", file=sys.stderr)

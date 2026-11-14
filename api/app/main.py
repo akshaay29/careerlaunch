@@ -33,7 +33,7 @@ from app.modules.matching.router import router as matching_router
 from app.modules.profile import events as profile_events
 from app.modules.profile.files import MAX_FILE_BYTES
 from app.modules.profile.router import router as profile_router
-from app.modules.profile.service import TOO_LARGE_DETAIL
+from app.modules.profile.service import DOCUMENT_TOO_LARGE_DETAIL, TOO_LARGE_DETAIL
 from app.modules.tracker.router import router as tracker_router
 from app.ports.file_store import FileStore, LazyFileStore, install_file_store
 
@@ -128,7 +128,11 @@ def create_app(
             ("POST", f"{API_V1}/resumes"): (
                 MAX_FILE_BYTES + MULTIPART_OVERHEAD_BYTES,
                 TOO_LARGE_DETAIL,
-            )
+            ),
+            ("POST", f"{API_V1}/documents"): (
+                MAX_FILE_BYTES + MULTIPART_OVERHEAD_BYTES,
+                DOCUMENT_TOO_LARGE_DETAIL,
+            ),
         },
     )
     app.add_middleware(

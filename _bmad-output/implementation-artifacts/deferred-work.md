@@ -49,3 +49,6 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-7-set-my-preferences.md`
   summary: Add component or e2e tests for the whole onboarding flow (consent → Resume → Skill Profile → Preferences → "You're set up") and the settings hub links, once `web` has a harness.
   evidence: Only pure helpers are tested, so dropping `onSaved` or a Continue button would break SM-6 onboarding silently.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-8-store-and-download-my-other-documents.md`
+  summary: Add component tests for `DocumentManager` (delete confirm, signed-out path, load-more merge) once `web` has a harness.
+  evidence: Only the pure helpers in `lib/documents.ts` are tested.
