@@ -334,6 +334,73 @@
         ]
       }
     },
+    "/api/v1/spend-caps": {
+      "get": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Get Spend Caps",
+        "operationId": "getSpendCaps",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpendCapsOut"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "SupabaseAccessToken": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Put Spend Caps",
+        "description": "Set my per-run and monthly caps. They apply from the next run.",
+        "operationId": "putSpendCaps",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpendCapsInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpendCapsOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A cap is out of bounds",
+            "content": {
+              "application/problem+json": {}
+            }
+          }
+        },
+        "security": [
+          {
+            "SupabaseAccessToken": []
+          }
+        ]
+      }
+    },
     "/api/v1/resumes": {
       "post": {
         "tags": [
@@ -1218,6 +1285,33 @@
           }
         }
       }
+    },
+    "/api/v1/provider-usage": {
+      "get": {
+        "tags": [
+          "listings"
+        ],
+        "summary": "Get Provider Usage",
+        "description": "My collection status, spend caps, this month's spend and latest runs. Never run ids,\nsearch parameters or tokens.",
+        "operationId": "getProviderUsage",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderUsage"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "SupabaseAccessToken": []
+          }
+        ]
+      }
     }
   },
   "components": {
@@ -2066,6 +2160,212 @@
         "title": "ProviderKeyMeta",
         "description": "What the Student sees about their Provider Key: whether one is stored, its last four\ncharacters and when it was last validated. Never the token."
       },
+      "ProviderUsage": {
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/ProviderUsageStatus"
+          },
+          "caps": {
+            "$ref": "#/components/schemas/ProviderUsageCaps"
+          },
+          "month": {
+            "$ref": "#/components/schemas/ProviderUsageMonth"
+          },
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/ProviderUsageRun"
+            },
+            "type": "array",
+            "title": "Runs"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "caps",
+          "month",
+          "runs"
+        ],
+        "title": "ProviderUsage",
+        "description": "My collection status, caps, this month's spend and my latest 30 runs, newest first."
+      },
+      "ProviderUsageCaps": {
+        "properties": {
+          "per_run_usd": {
+            "type": "number",
+            "title": "Per Run Usd"
+          },
+          "monthly_usd": {
+            "type": "number",
+            "title": "Monthly Usd"
+          },
+          "is_default": {
+            "type": "boolean",
+            "title": "Is Default"
+          }
+        },
+        "type": "object",
+        "required": [
+          "per_run_usd",
+          "monthly_usd",
+          "is_default"
+        ],
+        "title": "ProviderUsageCaps"
+      },
+      "ProviderUsageMonth": {
+        "properties": {
+          "spent_usd": {
+            "type": "number",
+            "title": "Spent Usd"
+          },
+          "committed_usd": {
+            "type": "number",
+            "title": "Committed Usd"
+          },
+          "monthly_cap_usd": {
+            "type": "number",
+            "title": "Monthly Cap Usd"
+          }
+        },
+        "type": "object",
+        "required": [
+          "spent_usd",
+          "committed_usd",
+          "monthly_cap_usd"
+        ],
+        "title": "ProviderUsageMonth",
+        "description": "This UTC calendar month: ``spent_usd`` recorded so far; ``committed_usd`` adds what\nruns in progress may still charge (counted against ``monthly_cap_usd``)."
+      },
+      "ProviderUsageRun": {
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "starting",
+              "running",
+              "succeeded",
+              "failed",
+              "refused"
+            ],
+            "title": "Status"
+          },
+          "error_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Kind"
+          },
+          "estimated_cost_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimated Cost Usd"
+          },
+          "cost_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Usd"
+          },
+          "items": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Items"
+          },
+          "ingested": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ingested"
+          }
+        },
+        "type": "object",
+        "required": [
+          "created_at",
+          "status",
+          "error_kind",
+          "estimated_cost_usd",
+          "cost_usd",
+          "items",
+          "ingested"
+        ],
+        "title": "ProviderUsageRun",
+        "description": "One collection run. ``status``: ``starting``, ``running``, ``succeeded``, ``failed``\nor ``refused``; ``error_kind`` says why it failed or was refused."
+      },
+      "ProviderUsageStatus": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "paused"
+            ],
+            "title": "Status"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "exhausted_until": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exhausted Until"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "reason",
+          "exhausted_until"
+        ],
+        "title": "ProviderUsageStatus",
+        "description": "Whether collection runs for the Student now. ``reason`` (when paused):\n``key_invalid``, ``credit_exhausted``, ``not_permitted`` or ``account_blocked``;\n``exhausted_until``: when exhausted credit stops blocking (the billing-cycle end)."
+      },
       "ResumeDownload": {
         "properties": {
           "url": {
@@ -2337,6 +2637,67 @@
           "label"
         ],
         "title": "SkillRef"
+      },
+      "SpendCapsInput": {
+        "properties": {
+          "per_run_usd": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 2.0,
+                "minimum": 0.05
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "Per Run Usd"
+          },
+          "monthly_usd": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 100.0,
+                "minimum": 0.25
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "Monthly Usd"
+          }
+        },
+        "type": "object",
+        "required": [
+          "per_run_usd",
+          "monthly_usd"
+        ],
+        "title": "SpendCapsInput",
+        "description": "New caps in USD: per-run 0.05 to 2.00, monthly 0.25 to 100, and monthly at least the\nper-run cap."
+      },
+      "SpendCapsOut": {
+        "properties": {
+          "per_run_usd": {
+            "type": "number",
+            "title": "Per Run Usd"
+          },
+          "monthly_usd": {
+            "type": "number",
+            "title": "Monthly Usd"
+          },
+          "is_default": {
+            "type": "boolean",
+            "title": "Is Default"
+          }
+        },
+        "type": "object",
+        "required": [
+          "per_run_usd",
+          "monthly_usd",
+          "is_default"
+        ],
+        "title": "SpendCapsOut",
+        "description": "The Student's spend caps in USD. ``is_default``: never set, so the platform defaults\napply. Every run is refused before it starts when its estimate is above ``per_run_usd``\nor when it could take this month's committed spend above ``monthly_usd``."
       },
       "ValidationError": {
         "properties": {

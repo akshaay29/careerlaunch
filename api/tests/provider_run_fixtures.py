@@ -2,6 +2,7 @@
 Apify Store samples, a fake-runner environment and Student setup."""
 
 import base64
+import itertools
 import os
 import uuid
 from collections.abc import Iterator
@@ -229,3 +230,47 @@ async def make_student(
         ["internship"],
     )
     return owner
+
+
+_fake_ids = itertools.count(1)
+
+
+def insert_run(
+    db: RunsDb,
+    owner_id: uuid.UUID | None,
+    status: str,
+    *,
+    cost: str | None = None,
+    max_charge: str = "0.25",
+    days_ago: int = 0,
+    error_kind: str | None = None,
+    items: int | None = None,
+    ingested: int | None = None,
+) -> uuid.UUID:
+    """A ``provider_runs`` row written directly (Story 2.4 spend and usage tests). Running and
+    succeeded rows get a low-entropy fake Apify run id."""
+    run_id = uuid.uuid7()
+    n = next(_fake_ids)
+    apify_id = f"fakerun{n:04d}" if status in ("running", "succeeded", "failed") else None
+    db.execute(
+        "INSERT INTO app.provider_runs (id, owner_id, purpose, run_key, actor, status, "
+        "apify_run_id, params, max_items, max_charge_usd, estimated_cost_usd, cost_usd, "
+        "error_kind, items, ingested, created_at) VALUES (%s, %s, 'jobs', %s, %s, %s, %s, "
+        "'{\"role_titles\": [\"Secret Role\"]}'::jsonb, 100, %s, 0.10, %s, %s, %s, %s, "
+        "now() - make_interval(days => %s))",
+        (
+            run_id,
+            owner_id,
+            f"test:{run_id}",
+            PRIMARY,
+            status,
+            apify_id,
+            max_charge,
+            cost,
+            error_kind,
+            items,
+            ingested,
+            days_ago,
+        ),
+    )
+    return run_id

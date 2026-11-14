@@ -2,6 +2,7 @@
 
 from collections import deque
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import SecretStr
@@ -34,7 +35,8 @@ class FakeProviderRunner:
     (or raises ``start_error``). ``get_run`` pops the next state from ``states`` (the last
     one repeats; default SUCCEEDED with dataset ``ds-<n>``), or raises ``get_error``.
     ``fetch_items`` returns ``datasets[dataset_id]`` up to ``limit`` (or raises
-    ``fetch_error``). ``abort_run`` records ``(token, run_id)`` in ``aborted``."""
+    ``fetch_error``). ``abort_run`` records ``(token, run_id)`` in ``aborted``.
+    ``billing_cycle_end`` returns ``cycle_end`` (None = unknown) and counts ``cycle_calls``."""
 
     mode: Literal["valid", "invalid", "unavailable"] = "valid"
     user_id: str | None = "apify-user-1"
@@ -49,6 +51,8 @@ class FakeProviderRunner:
     fetches: list[tuple[str, str, int]] = field(default_factory=list)
     fetch_error: ProviderError | None = None
     aborted: list[tuple[str, str]] = field(default_factory=list)
+    cycle_end: datetime | None = None
+    cycle_calls: int = 0
 
     async def validate_token(self, token: SecretStr) -> ProviderAccount:
         self.validated.append(token.get_secret_value())
@@ -101,3 +105,8 @@ class FakeProviderRunner:
     async def abort_run(self, token: SecretStr, run_id: str) -> None:
         assert isinstance(token, SecretStr)
         self.aborted.append((token.get_secret_value(), run_id))
+
+    async def billing_cycle_end(self, token: SecretStr) -> datetime | None:
+        assert isinstance(token, SecretStr)
+        self.cycle_calls += 1
+        return self.cycle_end

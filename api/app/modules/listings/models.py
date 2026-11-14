@@ -77,6 +77,8 @@ class ProviderRun(Base):
     params: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default="{}")
     max_items: Mapped[int] = mapped_column(Integer)
     max_charge_usd: Mapped[Decimal] = mapped_column(Numeric(10, 4))
+    # max_items x APIFY_PRICE_PER_ITEM_USD (0014; NULL on older rows).
+    estimated_cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
     cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(12, 6))
     items: Mapped[int | None] = mapped_column(Integer)
     ingested: Mapped[int | None] = mapped_column(Integer)

@@ -1,10 +1,21 @@
 """accounts.models: ``accounts`` (DDL in migration 0004_accounts), ``consents`` (0005),
-``deleted_accounts`` (0010) and ``provider_credentials`` (0012)."""
+``deleted_accounts`` (0010), ``provider_credentials`` (0012), ``provider_status`` (0013)
+and ``spend_caps`` (0014)."""
 
 import uuid
 from datetime import datetime
+from decimal import Decimal
 
-from sqlalchemy import CHAR, DateTime, ForeignKey, LargeBinary, SmallInteger, Text, func
+from sqlalchemy import (
+    CHAR,
+    DateTime,
+    ForeignKey,
+    LargeBinary,
+    Numeric,
+    SmallInteger,
+    Text,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -100,7 +111,8 @@ class ProviderCredential(Base):
 
 class ProviderStatus(Base):
     """A Student's collection status across every provider purpose (DDL in migration
-    0013_provider_runs). No row means ``active``. Story 2.4 writes it."""
+    0013_provider_runs; reasons checked by 0014). No row means ``active``. Written by
+    ``pause_provider`` and cleared by ``store_credential``."""
 
     __tablename__ = "provider_status"
 
@@ -112,6 +124,22 @@ class ProviderStatus(Base):
     exhausted_until: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class SpendCaps(Base):
+    """A Student's spend caps in USD (DDL in migration 0014_spend_caps). No row means the
+    defaults (``COLLECT_MAX_CHARGE_USD`` per run, ``DEFAULT_MONTHLY_CAP_USD`` a month)."""
+
+    __tablename__ = "spend_caps"
+
+    owner_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("accounts.id", ondelete="CASCADE"), primary_key=True
+    )
+    per_run_usd: Mapped[Decimal] = mapped_column(Numeric(10, 4))
+    monthly_usd: Mapped[Decimal] = mapped_column(Numeric(10, 4))
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

@@ -4,9 +4,10 @@
 import uuid
 from dataclasses import dataclass
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import or_, select, text, tuple_, update
+from sqlalchemy import case, func, or_, select, text, tuple_, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -262,3 +263,81 @@ async def stale_runs(
         .limit(limit)
     )
     return [(r.id, r.owner_id, r.apify_run_id) for r in (await session.execute(stmt)).all()]
+
+
+async def lock_spend(session: AsyncSession, scope: str) -> None:
+    """Serialise the cap check and the insert of runs in ``scope`` (``owner:<id>`` or
+    ``platform``) until the transaction ends."""
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtextextended(:k, 0))"), {"k": f"spend:{scope}"}
+    )
+
+
+@dataclass(frozen=True)
+class MonthSpend:
+    """Month-to-date spend in USD: ``spent`` is the cost recorded so far (finished runs and
+    the cost so far of runs in flight); ``committed`` adds what runs in flight may still
+    charge (their ``max_charge_usd`` minus their cost so far)."""
+
+    spent: Decimal
+    committed: Decimal
+
+
+_COST = func.coalesce(ProviderRun.cost_usd, 0)
+_IN_FLIGHT = ("starting", "running")
+# A failed run that reached Apify but never recorded a cost (start_unknown, timeout, reaped)
+# may have spent up to its cap: count it at the cap.
+_SPENT = case(
+    (
+        (ProviderRun.status == "failed")
+        & ProviderRun.cost_usd.is_(None)
+        & ProviderRun.apify_run_id.is_not(None),
+        ProviderRun.max_charge_usd,
+    ),
+    else_=_COST,
+)
+
+
+async def month_spend(
+    session: AsyncSession, since: datetime, owner_id: uuid.UUID | None = None
+) -> MonthSpend:
+    """Spend of runs created since ``since``, plus every run still in flight whenever it was
+    created: one owner's, or (``owner_id`` None) every Student's (System seed runs excluded).
+    Refused rows never spent anything; a failed run with an Apify run id and no recorded cost
+    counts at its ``max_charge_usd``."""
+    remaining = case(
+        (
+            ProviderRun.status.in_(_IN_FLIGHT),
+            func.greatest(ProviderRun.max_charge_usd - _COST, 0),
+        ),
+        else_=0,
+    )
+    stmt = select(
+        func.coalesce(func.sum(_SPENT), 0), func.coalesce(func.sum(remaining), 0)
+    ).where(
+        or_(
+            (ProviderRun.created_at >= since) & (ProviderRun.status != "refused"),
+            ProviderRun.status.in_(_IN_FLIGHT),
+        )
+    )
+    if owner_id is None:
+        stmt = stmt.where(ProviderRun.owner_id.is_not(None))
+    else:
+        stmt = stmt.where(ProviderRun.owner_id == owner_id)
+    row = (await session.execute(stmt)).one()
+    spent, rest = Decimal(str(row[0])), Decimal(str(row[1]))
+    return MonthSpend(spent, spent + rest)
+
+
+async def latest_runs(
+    session: AsyncSession, owner_id: uuid.UUID, limit: int
+) -> list[ProviderRun]:
+    """The owner's newest runs first."""
+    stmt = (
+        select(ProviderRun)
+        .where(ProviderRun.owner_id == owner_id)
+        .order_by(ProviderRun.created_at.desc(), ProviderRun.id.desc())
+        .limit(limit)
+        .execution_options(populate_existing=True)
+    )
+    return list((await session.execute(stmt)).scalars().all())

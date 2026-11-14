@@ -3,6 +3,7 @@
 import re
 import uuid
 from datetime import datetime
+from decimal import Decimal
 from typing import Literal
 
 from pydantic import BaseModel, Field, SecretStr, field_validator
@@ -105,3 +106,21 @@ class ProviderKeyMeta(BaseModel):
     # True when the stored key can no longer be read (its master-key version was retired):
     # the Student must enter it again.
     needs_reentry: bool
+
+
+class SpendCapsOut(BaseModel):
+    """The Student's spend caps in USD. ``is_default``: never set, so the platform defaults
+    apply. Every run is refused before it starts when its estimate is above ``per_run_usd``
+    or when it could take this month's committed spend above ``monthly_usd``."""
+
+    per_run_usd: float
+    monthly_usd: float
+    is_default: bool
+
+
+class SpendCapsInput(BaseModel):
+    """New caps in USD: per-run 0.05 to 2.00, monthly 0.25 to 100, and monthly at least the
+    per-run cap."""
+
+    per_run_usd: Decimal = Field(ge=Decimal("0.05"), le=Decimal("2.00"), decimal_places=4)
+    monthly_usd: Decimal = Field(ge=Decimal("0.25"), le=Decimal(100), decimal_places=4)

@@ -3,6 +3,7 @@
 import base64
 import ipaddress
 import re
+from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal, Self
@@ -15,6 +16,10 @@ API_DIR = Path(__file__).resolve().parents[2]
 REPO_DIR = API_DIR.parent
 
 LOCAL_DATABASE_URL = "postgresql+psycopg://postgres:postgres@127.0.0.1:54322/postgres"
+
+# The per-run cap a Student may set (USD); the platform default must be inside it.
+PER_RUN_CAP_MIN_USD = Decimal("0.05")
+PER_RUN_CAP_MAX_USD = Decimal("2.00")
 
 # An Apify actor name, ``owner/name`` (shared with the Apify adapter).
 ACTOR_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}/[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
@@ -89,6 +94,13 @@ class Settings(BaseSettings):
     collect_max_charge_usd: float = Field(default=0.25, gt=0, le=50)
     # Platform kill switch: false refuses every new provider run.
     provider_runs_enabled: bool = True
+    # Spend caps (Story 2.4). A Student without their own caps gets COLLECT_MAX_CHARGE_USD per
+    # run and this monthly cap (under Apify's USD 5 of free monthly credit).
+    default_monthly_cap_usd: float = Field(default=4.00, ge=0.25, le=100)
+    # The estimate of one run is max_items x this price (the primary actor's price per item).
+    apify_price_per_item_usd: float = Field(default=0.001, gt=0, le=1)
+    # Optional platform-wide monthly cap over every Student's committed spend; unset = off.
+    platform_monthly_cap_usd: float | None = Field(default=None, gt=0)
     # The owner's Apify token, used ONLY by scripts/seed_pool.py.
     seed_apify_token: SecretStr | None = None
 
@@ -100,6 +112,7 @@ class Settings(BaseSettings):
         "supabase_service_role_key",
         "credentials_master_keys",
         "seed_apify_token",
+        "platform_monthly_cap_usd",
         mode="before",
     )
     @classmethod
@@ -133,6 +146,30 @@ class Settings(BaseSettings):
             raise ValueError(
                 "APIFY_API_BASE must be an https:// URL (http:// only when ENVIRONMENT is "
                 "local or ci)"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _spend_defaults_are_consistent(self) -> Self:
+        """A default run must fit its own charge cap, the charge cap must be a per-run cap a
+        Student could set, and the default monthly cap must allow at least one such run.
+        Otherwise every scheduled run would be refused or fail."""
+        charge = Decimal(str(self.collect_max_charge_usd))
+        estimate = Decimal(str(self.apify_price_per_item_usd)) * self.collect_max_items
+        if estimate > charge:
+            raise ValueError(
+                f"COLLECT_MAX_ITEMS x APIFY_PRICE_PER_ITEM_USD ({estimate}) must not exceed "
+                f"COLLECT_MAX_CHARGE_USD ({charge}): every default run would be refused"
+            )
+        if not PER_RUN_CAP_MIN_USD <= charge <= PER_RUN_CAP_MAX_USD:
+            raise ValueError(
+                f"COLLECT_MAX_CHARGE_USD ({charge}) must be between {PER_RUN_CAP_MIN_USD} and "
+                f"{PER_RUN_CAP_MAX_USD}, the per-run caps a Student can set"
+            )
+        if charge > Decimal(str(self.default_monthly_cap_usd)):
+            raise ValueError(
+                f"COLLECT_MAX_CHARGE_USD ({charge}) must not exceed DEFAULT_MONTHLY_CAP_USD "
+                f"({self.default_monthly_cap_usd}): the default monthly cap must allow one run"
             )
         return self
 

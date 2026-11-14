@@ -2,7 +2,8 @@
 
 Browsing the shared Listing pool (FR-6, FR-7): a page of Listings visible to the Student
 (the pool plus their own private Listings), not expired, newest first; and one Listing by id
-(404 for anything not visible). Read-only: nothing here commits.
+(404 for anything not visible). Also the Student's collection usage (Story 2.4). Read-only:
+nothing here commits.
 """
 
 import uuid
@@ -15,7 +16,16 @@ from app.core import skills
 from app.core.auth import Actor, current_actor
 from app.core.db import get_session
 from app.modules.listings import service
-from app.modules.listings.schemas import ListingList, ListingOut, ListingSkill
+from app.modules.listings.schemas import (
+    ListingList,
+    ListingOut,
+    ListingSkill,
+    ProviderUsage,
+    ProviderUsageCaps,
+    ProviderUsageMonth,
+    ProviderUsageRun,
+    ProviderUsageStatus,
+)
 
 router = APIRouter(tags=["listings"])
 
@@ -68,3 +78,43 @@ async def list_listings(
 )
 async def get_listing(listing_id: uuid.UUID, actor: CurrentActor, session: Session) -> ListingOut:
     return _out(await service.get_listing(session, actor.id, listing_id))
+
+
+def _usd(value: object) -> float | None:
+    return None if value is None else float(value)  # type: ignore[arg-type]
+
+
+@router.get("/provider-usage", response_model=ProviderUsage, operation_id="getProviderUsage")
+async def get_provider_usage(actor: CurrentActor, session: Session) -> ProviderUsage:
+    """My collection status, spend caps, this month's spend and latest runs. Never run ids,
+    search parameters or tokens."""
+    usage = await service.provider_usage(session, actor.id)
+    return ProviderUsage(
+        status=ProviderUsageStatus(
+            status=usage.status.status,
+            reason=usage.status.reason,
+            exhausted_until=usage.status.exhausted_until,
+        ),
+        caps=ProviderUsageCaps(
+            per_run_usd=float(usage.caps.per_run_usd),
+            monthly_usd=float(usage.caps.monthly_usd),
+            is_default=usage.caps.is_default,
+        ),
+        month=ProviderUsageMonth(
+            spent_usd=float(usage.month.spent),
+            committed_usd=float(usage.month.committed),
+            monthly_cap_usd=float(usage.caps.monthly_usd),
+        ),
+        runs=[
+            ProviderUsageRun(
+                created_at=run.created_at,
+                status=run.status,  # type: ignore[arg-type]
+                error_kind=run.error_kind,
+                estimated_cost_usd=_usd(run.estimated_cost_usd),
+                cost_usd=_usd(run.cost_usd),
+                items=run.items,
+                ingested=run.ingested,
+            )
+            for run in usage.runs
+        ],
+    )

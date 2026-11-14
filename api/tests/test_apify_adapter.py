@@ -400,3 +400,89 @@ def test_unsupported_allowlisted_actor_fails_startup(monkeypatch: pytest.MonkeyP
     finally:
         monkeypatch.undo()
         get_settings.cache_clear()
+
+
+# --------------------------------------------------------------------------- Story 2.4
+
+
+@pytest.mark.parametrize(
+    ("status", "error_type", "kind"),
+    [
+        (402, None, "credit"),
+        (402, "anything", "credit"),
+        (403, "not-enough-usage-to-run-paid-actor", "credit"),
+        (403, "monthly-usage-limit-exceeded", "credit"),
+        (403, "Not-Enough-USAGE-To-Run", "credit"),
+        (403, "rate-limit-exceeded", "blocked"),
+        (403, "concurrent-run-limit-exceeded", "blocked"),
+        (403, "insufficient-permissions", "permission"),
+        (403, "user-is-blocked", "blocked"),
+        (403, None, "blocked"),
+    ],
+)
+async def test_rejection_kind(status: int, error_type: str | None, kind: str) -> None:
+    body = {"error": {"type": error_type, "message": "m"}} if error_type else {}
+    runner, _ = runner_with(lambda r: httpx.Response(status, json=body))
+    for call in (
+        runner.start_run(SecretStr(TOKEN), "a/b", {}, max_items=1, max_charge_usd=1),
+        runner.get_run(SecretStr(TOKEN), "fakerun0001"),
+        runner.fetch_items(SecretStr(TOKEN), "fakeds0001", limit=5),
+    ):
+        with pytest.raises(ProviderRejected) as exc:
+            await call
+        assert exc.value.kind == kind
+        assert TOKEN not in str(exc.value)
+
+
+async def test_billing_cycle_end_reads_the_limits() -> None:
+    body = {
+        "data": {
+            "monthlyUsageCycle": {
+                "startAt": "2026-11-02T00:00:00.000Z",
+                "endAt": "2026-12-01T23:59:59.999Z",
+            },
+            "limits": {"maxMonthlyUsageUsd": 5},
+            "current": {"monthlyUsageUsd": 5},
+        }
+    }
+    runner, requests = runner_with(lambda r: httpx.Response(200, json=body))
+    end = await runner.billing_cycle_end(SecretStr(TOKEN))
+    assert end is not None and end.isoformat() == "2026-12-01T23:59:59.999000+00:00"
+    (req,) = requests
+    assert req.method == "GET" and str(req.url) == f"{BASE}/v2/users/me/limits"
+    assert req.headers["authorization"] == f"Bearer {TOKEN}"
+    assert req.headers["x-apify-integration-platform"] == "careerlaunch"
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        httpx.Response(200, json={"data": {}}),
+        httpx.Response(200, json={"data": {"monthlyUsageCycle": {"endAt": "not a date"}}}),
+        httpx.Response(200, json={"data": {"monthlyUsageCycle": {"endAt": 5}}}),
+        httpx.Response(200, content=b"<html>"),
+        httpx.Response(401, json={"error": {"type": "invalid-token"}}),
+        httpx.Response(403, json={"error": {"type": "insufficient-permissions"}}),
+        httpx.Response(500),
+    ],
+)
+async def test_billing_cycle_end_never_raises(
+    response: httpx.Response, caplog: pytest.LogCaptureFixture
+) -> None:
+    runner, _ = runner_with(lambda r: response)
+    with caplog.at_level(logging.DEBUG):
+        assert await runner.billing_cycle_end(SecretStr(TOKEN)) is None
+    assert TOKEN not in caplog.text
+
+    def boom(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("c")
+
+    runner, _ = runner_with(boom)
+    assert await runner.billing_cycle_end(SecretStr(TOKEN)) is None
+
+
+async def test_lazy_runner_forwards_billing_cycle_end() -> None:
+    fake = FakeProviderRunner()
+    lazy = LazyProviderRunner(lambda: fake)
+    assert await lazy.billing_cycle_end(SecretStr(TOKEN)) is None
+    assert fake.cycle_calls == 1

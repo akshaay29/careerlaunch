@@ -50,8 +50,8 @@ development_status:
   epic-2: in-progress
   2-1-shared-listing-pool-source-adapter-and-browsing: done
   2-2-add-my-apify-provider-key: done
-  2-3-collect-linkedin-listings-on-a-schedule: review
-  2-4-see-my-usage-set-spend-caps-and-pause-on-failure: backlog
+  2-3-collect-linkedin-listings-on-a-schedule: done
+  2-4-see-my-usage-set-spend-caps-and-pause-on-failure: in-progress
   2-5-expire-evict-and-take-down-listings: backlog
   2-6-search-listings-by-keyword: backlog
   epic-2-retrospective: optional

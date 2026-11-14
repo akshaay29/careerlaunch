@@ -423,7 +423,34 @@ Supabase dashboard → Authentication:
 - **Costs:** every run is billed to the Student's own Apify account, capped at
   `COLLECT_MAX_CHARGE_USD` and `COLLECT_MAX_ITEMS` per run; at the defaults a daily run costs
   at most USD 0.25 (typically about USD 0.10 for 100 results), well inside Apify's USD 5 of
-  free monthly credit. Usage UI, monthly caps and pause-on-failure are Story 2.4.
+  free monthly credit.
+- **Spend caps (Story 2.4):** each Student has a per-run cap (USD 0.05 to 2.00, default
+  `COLLECT_MAX_CHARGE_USD`) and a monthly cap (USD 0.25 to 100 and at least the per-run cap,
+  default `DEFAULT_MONTHLY_CAP_USD` = 4.00), set with `PUT /api/v1/spend-caps` or on
+  `/settings/provider-key` (no `spend_caps` row means the defaults). A run's
+  `max_charge_usd` is the per-run cap; its estimate is `max_items x APIFY_PRICE_PER_ITEM_USD`
+  (default 0.001, so USD 0.10 for 100 items), stored as `estimated_cost_usd`. After the
+  other checks, under a per-owner advisory lock, `start_provider_run` refuses with
+  `run_cap` (estimate above the per-run cap), `monthly_cap` (this UTC month's committed
+  spend plus the per-run cap above the monthly cap) or `platform_cap` (the same over every
+  Student above the optional `PLATFORM_MONTHLY_CAP_USD`; unset means off). Committed spend
+  is `cost_usd` of finished runs plus, for `starting`/`running` runs, their full
+  `max_charge_usd` (worst case), so two quick runs can never together pass a cap. The
+  System seed run skips the caps and is not counted in the platform total.
+- **Pause on failure (Story 2.4):** when Apify refuses a Student run (on start or on a
+  poll), the run is `failed` and `accounts.service.pause_provider` writes `provider_status`
+  in the same transaction: an invalid token is `key_invalid`; a 402 or a usage/credit error
+  type is `credit_exhausted` with `exhausted_until` = the end of the Apify billing cycle
+  (`GET /v2/users/me/limits`, `monthlyUsageCycle.endAt`; the next UTC month when unknown);
+  403 `insufficient-permissions` is `not_permitted`; any other 403 is `account_blocked`.
+  Schedules are never paused for this: the daily tick keeps enqueuing and every start while
+  paused is a cheap `refused` row (`paused` or `exhausted`) with no Apify call. Exhausted
+  credit resumes by itself once `exhausted_until` has passed; saving a key (`PUT
+  /api/v1/provider-key`) clears the pause. Seed runs never pause.
+- **Usage:** `GET /api/v1/provider-usage` returns the Student's status (with the reason
+  and resume date), caps, this month's spent and committed USD and the latest 30 runs
+  (time, status, `error_kind`, estimate, actual cost, items, ingested; never run ids,
+  search parameters or tokens). The Provider Key settings page shows it below the key.
 - **Kill switch:** set `PROVIDER_RUNS_ENABLED=false` in Render to refuse every new run
   (rows are stored as `refused`/`disabled`); runs already started still finish and are
   ingested. Disabling the `linkedin` Source (`app.sources.enabled`) refuses runs too.

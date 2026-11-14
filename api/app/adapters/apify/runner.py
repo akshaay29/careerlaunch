@@ -30,13 +30,21 @@ Runs (Story 2.3), same headers and the same transport mapping:
 * ``abort_run``: ``POST /v2/actor-runs/<id>/abort``; best effort: any error is logged (type
   and status only) and swallowed, and aborting a finished run is harmless.
 * Status mapping for run calls: 401 :class:`ProviderKeyInvalid`; 402 and 403
-  :class:`ProviderRejected` (credit, plan or permission); 429, 5xx, other 4xx and unusable
-  bodies :class:`ProviderUnavailable`.
+  :class:`ProviderRejected`; 429, 5xx, other 4xx and unusable bodies
+  :class:`ProviderUnavailable`. The rejection ``kind`` (Story 2.4) comes from the status and
+  Apify's error type: 402, or an error type about usage or credit (e.g.
+  ``not-enough-usage-to-run-paid-actor``), is ``credit``; 403 ``insufficient-permissions``
+  is ``permission``; any other 403 is ``blocked``.
+
+Billing cycle (Story 2.4): ``billing_cycle_end`` reads ``data.monthlyUsageCycle.endAt``
+(ISO 8601, UTC) from ``GET /v2/users/me/limits``. It never raises: any failure is logged and
+gives None.
 """
 
 import logging
 import math
 import re
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -49,6 +57,7 @@ from app.ports.provider_runner import (
     ProviderKeyInvalid,
     ProviderRejected,
     ProviderUnavailable,
+    RejectionKind,
     RunState,
     RunStatus,
 )
@@ -58,6 +67,9 @@ logger = logging.getLogger("app.adapters.apify")
 DEFAULT_TIMEOUT_SECONDS = 15.0
 INTEGRATION_HEADER = "x-apify-integration-platform"
 INSUFFICIENT_PERMISSIONS = "insufficient-permissions"
+# Error types about exhausted usage or credit (Apify uses e.g.
+# ``not-enough-usage-to-run-paid-actor``). Matched on the lower-cased type.
+_CREDIT_TYPE_RE = re.compile(r"usage|credit|payment")
 _ID_RE = re.compile(r"^[A-Za-z0-9]{1,64}$")
 _STATUSES: dict[str, RunStatus] = {
     "READY": "READY",
@@ -79,6 +91,15 @@ def _error_type(response: httpx.Response) -> str | None:
     error = body.get("error") if isinstance(body, dict) else None
     value = error.get("type") if isinstance(error, dict) else None
     return value if isinstance(value, str) else None
+
+
+def rejection_kind(status: int, error_type: str | None) -> RejectionKind:
+    """Why Apify refused a run call (HTTP 402 or 403)."""
+    if status == 402 or (error_type is not None and _CREDIT_TYPE_RE.search(error_type.lower())):
+        return "credit"
+    if error_type == INSUFFICIENT_PERMISSIONS:
+        return "permission"
+    return "blocked"
 
 
 def _data(body: Any, call: str) -> dict[str, Any]:
@@ -200,10 +221,13 @@ class ApifyProviderRunner:
         if status == 401:
             raise ProviderKeyInvalid("Apify rejected the token (401)")
         if status in (402, 403):
+            error_type = _error_type(response)
+            kind = rejection_kind(status, error_type)
             logger.warning(
-                "apify_run_refused", extra={"status": status, "error_type": _error_type(response)}
+                "apify_run_refused",
+                extra={"status": status, "error_type": error_type, "kind": kind},
             )
-            raise ProviderRejected(f"Apify refused the run call ({status})")
+            raise ProviderRejected(f"Apify refused the run call ({status})", kind=kind)
         logger.warning("apify_error_status", extra={"status": status})
         raise ProviderUnavailable(f"Apify returned HTTP {status}")
 
@@ -286,6 +310,21 @@ class ApifyProviderRunner:
             await self._run_call("POST", f"/v2/actor-runs/{run_id}/abort", token)
         except Exception as exc:  # best effort: never fails the caller
             logger.warning("apify_abort_failed", extra={"exc_type": type(exc).__name__})
+
+    async def billing_cycle_end(self, token: SecretStr) -> datetime | None:
+        try:
+            body = await self._run_call("GET", "/v2/users/me/limits", token)
+            cycle = _data(body, "limits").get("monthlyUsageCycle")
+            end = cycle.get("endAt") if isinstance(cycle, dict) else None
+            if not isinstance(end, str):
+                raise ValueError("no monthlyUsageCycle.endAt")
+            parsed = datetime.fromisoformat(end.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=UTC)
+            return parsed.astimezone(UTC)
+        except Exception as exc:  # never raises: the caller falls back
+            logger.warning("apify_limits_failed", extra={"exc_type": type(exc).__name__})
+            return None
 
 
 def from_settings(settings: Settings | None = None) -> ApifyProviderRunner:

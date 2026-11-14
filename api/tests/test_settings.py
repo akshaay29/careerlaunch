@@ -72,3 +72,48 @@ def test_prod_rejects_local_supabase_url(monkeypatch: pytest.MonkeyPatch, url: s
         Settings(_env_file=None)
     monkeypatch.setenv("SUPABASE_URL", "https://x.supabase.co")
     assert Settings(_env_file=None).supabase_url == "https://x.supabase.co"
+
+
+def test_blank_platform_cap_is_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("PLATFORM_MONTHLY_CAP_USD", raising=False)
+    assert Settings(_env_file=None).platform_monthly_cap_usd is None
+    assert Settings(_env_file=None, platform_monthly_cap_usd="").platform_monthly_cap_usd is None  # type: ignore[arg-type]
+    monkeypatch.setenv("PLATFORM_MONTHLY_CAP_USD", "  ")
+    assert Settings(_env_file=None).platform_monthly_cap_usd is None
+    monkeypatch.setenv("PLATFORM_MONTHLY_CAP_USD", "12.5")
+    assert Settings(_env_file=None).platform_monthly_cap_usd == 12.5
+
+
+def test_spend_defaults_pass(monkeypatch: pytest.MonkeyPatch) -> None:
+    for k in ("COLLECT_MAX_ITEMS", "COLLECT_MAX_CHARGE_USD", "DEFAULT_MONTHLY_CAP_USD", "APIFY_PRICE_PER_ITEM_USD"):
+        monkeypatch.delenv(k, raising=False)
+    s = Settings(_env_file=None)
+    assert (s.collect_max_items, s.collect_max_charge_usd, s.default_monthly_cap_usd) == (100, 0.25, 4.0)
+
+
+@pytest.mark.parametrize(
+    ("env", "message"),
+    [
+        ({"COLLECT_MAX_ITEMS": "500"}, "COLLECT_MAX_ITEMS x APIFY_PRICE_PER_ITEM_USD"),
+        ({"APIFY_PRICE_PER_ITEM_USD": "0.01"}, "COLLECT_MAX_ITEMS x APIFY_PRICE_PER_ITEM_USD"),
+        ({"COLLECT_MAX_CHARGE_USD": "0.04", "COLLECT_MAX_ITEMS": "10"}, "between 0.05 and 2.00"),
+        ({"COLLECT_MAX_CHARGE_USD": "3", "COLLECT_MAX_ITEMS": "10"}, "between 0.05 and 2.00"),
+        ({"COLLECT_MAX_CHARGE_USD": "0.50", "DEFAULT_MONTHLY_CAP_USD": "0.25"}, "DEFAULT_MONTHLY_CAP_USD"),
+    ],
+)
+def test_inconsistent_spend_defaults_fail_at_startup(
+    env: dict[str, str], message: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from pydantic import ValidationError
+
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    with pytest.raises(ValidationError, match=message):
+        Settings(_env_file=None)
+
+
+def test_a_larger_consistent_setup_passes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("COLLECT_MAX_ITEMS", "500")
+    monkeypatch.setenv("COLLECT_MAX_CHARGE_USD", "0.50")
+    s = Settings(_env_file=None)
+    assert s.collect_max_items == 500
