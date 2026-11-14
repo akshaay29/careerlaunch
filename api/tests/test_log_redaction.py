@@ -7,7 +7,7 @@ import pytest
 
 from app.core.logging import REDACTED, JsonFormatter
 
-TOKEN = "apify_api_Zx9yW8vU7tS6rQ5pO4nM3lK2jI1h"
+TOKEN = "apify_api_Zx9yW8vU7tS6rQ5pO4nM3lK2jI1h"  # ggignore -- fake test token, not a real credential
 
 
 def _format(msg: str, *args: object, extra: dict | None = None, exc: bool = False) -> str:

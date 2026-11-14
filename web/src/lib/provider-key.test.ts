@@ -31,7 +31,7 @@ test("the token is trimmed and must be 8 to 200 printable ASCII characters", () 
   assert.equal(precheckToken("apify_api_abc def"), TOKEN_FORMAT_MESSAGE);
   assert.equal(precheckToken(`  ${"x".repeat(200)}  `), null);
   assert.equal(precheckToken(" a!b~c#d9 "), null);
-  assert.equal(precheckToken("apify_api_abc123XYZ"), null);
+  assert.equal(precheckToken("apify_api_abc123XYZ"), null); // ggignore -- fake test token
 });
 
 function status(purpose: ConsentStatus["purpose"], s: ConsentStatus["status"]): ConsentStatus {

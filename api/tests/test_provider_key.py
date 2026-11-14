@@ -29,8 +29,8 @@ from tests.fakes.provider_runner import FakeProviderRunner
 
 KEY_URL = "/api/v1/provider-key"
 PROBLEM = "application/problem+json"
-TOKEN = "apify_api_FirstToken0123456789abcdefWXYZ"
-TOKEN_2 = "apify_api_SecondToken9876543210zyxwvuQRST"
+TOKEN = "apify_api_FirstToken0123456789abcdefWXYZ"  # ggignore -- fake test token
+TOKEN_2 = "apify_api_SecondToken9876543210zyxwvuQRST"  # ggignore -- fake test token
 INVALID_MSG = (
     "Apify didn't accept this token. Check that you copied it fully and that it hasn't expired."
 )
