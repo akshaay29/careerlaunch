@@ -6,7 +6,7 @@ import { OnboardingConsentStep } from "@/components/consent/onboarding-consent-s
 export const metadata: Metadata = { title: "Onboarding · CareerLaunch" };
 
 // The proxy sends signed-out visitors to /login. Step 1 is consent (Story 1.4), step 2 the
-// Resume (Story 1.5); Skill Profile and Preferences steps arrive in Stories 1.6-1.7.
+// Resume (Story 1.5), step 3 the Skill Profile (Story 1.6); Preferences arrive in Story 1.7.
 export default function OnboardingPage() {
   return (
     <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-6 px-6 py-16">

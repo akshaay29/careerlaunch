@@ -5,6 +5,7 @@
 * Objects live in one PRIVATE bucket (``STORAGE_BUCKET``); paths are server-chosen.
 * Signed URLs carry Storage's ``download=<name>`` parameter, so Storage answers with
   ``Content-Disposition: attachment``.
+* ``get`` is an authenticated download (``/object/authenticated/...``) with the same key.
 * Vendor and transport errors become :class:`FileStoreError` (status code only, no body).
 """
 
@@ -98,6 +99,17 @@ class SupabaseStorageFileStore:
         )
         if not response.is_success:
             raise self._fail("put", response)
+
+    async def get(self, path: str) -> bytes:
+        """Authenticated download (service-role key) of a private object."""
+        response = await self._request(
+            "get",
+            "GET",
+            f"/object/authenticated/{quote(self._bucket, safe='')}/{_quote_path(path)}",
+        )
+        if not response.is_success:
+            raise self._fail("get", response)
+        return response.content
 
     async def delete(self, paths: Sequence[str]) -> None:
         prefixes = list(paths)

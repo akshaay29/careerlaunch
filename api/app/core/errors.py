@@ -80,6 +80,21 @@ class UnsupportedMediaTypeError(DomainError):
     title = "Unsupported media type"
 
 
+class InvalidInputError(DomainError):
+    """A request that is well-formed but breaks a domain rule (e.g. too many custom
+    skills). Same shape as request validation errors: 422 with ``errors: [{loc, msg}]``."""
+
+    status = 422
+    slug = "validation-error"
+    title = "Validation error"
+
+    def __init__(self, loc: list[str], msg: str) -> None:
+        super().__init__(
+            "The request is invalid. See errors for details.",
+            extra={"errors": [{"loc": loc, "msg": msg}]},
+        )
+
+
 class ConsentRequiredError(DomainError):
     """The Student has no active consent on the current version for ``purpose`` (AD-11)."""
 

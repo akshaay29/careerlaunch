@@ -11,6 +11,14 @@ Takes the session and the FileStore; never commits (routers do).
   ``ResumeActivated`` in the caller's unit of work.
 * Delete removes the row and enqueues ``profile.delete_stored_files`` in the same
   transaction, so the object is removed even if Storage is down right now.
+
+Skill Profile (FR-4, AD-8):
+
+* ``ResumeActivated`` marks the profile ``pending`` for the new Resume and enqueues
+  ``profile.extract_resume`` (``priority``) in the publisher's transaction.
+* The job stores the extracted set (with ``vocab_version``) and publishes
+  ``SkillProfileChanged``. The Student's ``added`` / ``removed`` / ``custom`` edits are kept.
+* Effective skills are ``(extracted | added) - removed``; custom skills are never scored.
 """
 
 import asyncio
@@ -22,13 +30,15 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import skills
 from app.core.errors import (
     ConflictError,
+    InvalidInputError,
     NotFoundError,
     PayloadTooLargeError,
     UnsupportedMediaTypeError,
 )
-from app.core.events import ResumeActivated, publish
+from app.core.events import ResumeActivated, SkillProfileChanged, publish
 from app.core.jobs import enqueue
 from app.modules.profile import repo
 from app.modules.profile.files import (
@@ -37,8 +47,10 @@ from app.modules.profile.files import (
     sniff_resume_type,
     storage_path,
 )
-from app.modules.profile.models import Resume
-from app.modules.profile.tasks import DELETE_STORED_FILES
+from app.modules.profile.extraction import ExtractionResult
+from app.modules.profile.models import Resume, SkillProfile
+from app.modules.profile.schemas import MAX_CUSTOM_SKILLS
+from app.modules.profile.tasks import DELETE_STORED_FILES, EXTRACT_RESUME
 from app.ports.file_store import FileStore
 
 logger = logging.getLogger("app.profile")
@@ -192,6 +204,9 @@ async def delete_resume(session: AsyncSession, owner_id: uuid.UUID, resume_id: u
     """Delete the row and enqueue the object's deletion in the same transaction. Deleting
     the active version leaves no version active."""
     await repo.lock_owner_resumes(session, owner_id)
+    # Before the delete (the FK then sets resume_id to NULL): a pending extraction of this
+    # Resume will never land, so the profile must not stay pending forever.
+    await repo.settle_pending_skill_profile(session, owner_id, resume_id)
     deleted = await repo.delete_resume(session, owner_id, resume_id)
     if deleted is None:
         raise NotFoundError(NOT_FOUND_DETAIL)
@@ -202,3 +217,171 @@ async def delete_resume(session: AsyncSession, owner_id: uuid.UUID, resume_id: u
         owner_id=owner_id,
         resume_id=resume_id,
     )
+
+
+# --------------------------------------------------------------------------- Skill Profile
+
+UNREADABLE_MESSAGE = (
+    "We couldn't read text from this Resume. Upload a text-based PDF or add your skills manually."
+)
+
+
+async def on_resume_activated(session: AsyncSession, event: ResumeActivated) -> None:
+    """``ResumeActivated`` subscriber (registered by ``profile.events.register`` at app
+    wiring): mark the profile pending and enqueue the extraction, in the publisher's
+    transaction."""
+    await repo.mark_skill_profile_pending(session, event.owner_id, event.resume_id)
+    await enqueue(
+        session,
+        EXTRACT_RESUME,
+        f"{EXTRACT_RESUME}:resume:{event.resume_id}",
+        owner_id=event.owner_id,
+        resume_id=event.resume_id,
+    )
+
+
+async def extraction_target(
+    session: AsyncSession, owner_id: uuid.UUID, resume_id: uuid.UUID
+) -> Resume | None:
+    """The Resume to extract, or None when it is gone or no longer active (stale job)."""
+    resume = await repo.get(session, owner_id, resume_id)
+    if resume is None or not resume.is_active:
+        return None
+    return resume
+
+
+async def save_extraction(
+    session: AsyncSession, owner_id: uuid.UUID, resume_id: uuid.UUID, result: ExtractionResult
+) -> bool:
+    """Store an extraction result and publish ``SkillProfileChanged``. A no-op (returns
+    False) when the Resume was deleted or another one was activated meanwhile."""
+    # The same lock as activation and deletion, so the Resume cannot change under us.
+    await repo.lock_owner_resumes(session, owner_id)
+    # Edits compute `removed` against the extracted set: serialise with them.
+    await repo.lock_owner_skill_profile(session, owner_id)
+    if await extraction_target(session, owner_id, resume_id) is None:
+        return False
+    stored = await repo.store_extraction(
+        session,
+        owner_id,
+        resume_id,
+        status=result.status,
+        extracted_skills=skills.sorted_ids(result.skills),
+        vocab_version=skills.VOCAB_VERSION,
+        education=list(result.education),
+        experience=list(result.experience),
+        extracted_at=datetime.now(UTC),
+    )
+    if stored:
+        await publish(session, SkillProfileChanged(owner_id=owner_id))
+    return stored
+
+
+async def get_skill_profile(session: AsyncSession, owner_id: uuid.UUID) -> SkillProfile | None:
+    return await repo.get_skill_profile(session, owner_id)
+
+
+def effective_skills(profile: SkillProfile | None) -> set[str]:
+    """``(extracted | added) - removed``: the skills used for matching. Custom skills are
+    never included."""
+    if profile is None:
+        return set()
+    return (set(profile.extracted_skills) | set(profile.added_skills)) - set(
+        profile.removed_skills
+    )
+
+
+def has_edits(profile: SkillProfile | None) -> bool:
+    """True when the Student added, removed or entered custom skills."""
+    return profile is not None and bool(
+        profile.added_skills or profile.removed_skills or profile.custom_skills
+    )
+
+
+def clean_term(term: str) -> str:
+    """A skill term as stored: surrounding whitespace trimmed, inner runs collapsed."""
+    return " ".join(term.split())
+
+
+async def edit_skill_profile(
+    session: AsyncSession,
+    owner_id: uuid.UUID,
+    *,
+    add: list[str],
+    remove: list[str],
+    remove_custom: list[str],
+) -> tuple[SkillProfile | None, bool]:
+    """Apply a Student's edits over the extracted set; returns ``(profile, changed)``.
+
+    * ``add``: a vocabulary term goes to ``added`` (and leaves ``removed``); any other term
+      goes to ``custom`` (case-insensitive de-duplication, at most 50 in total).
+    * ``remove``: skill ids. An added skill leaves ``added``; an extracted one goes to
+      ``removed``. An id outside the vocabulary is a 422.
+    * ``remove_custom``: custom terms to drop (case-insensitive).
+
+    Works without a row (manual entry without a Resume): one is created with no status.
+    Publishes ``SkillProfileChanged`` only when something changed.
+    """
+    for i, skill_id in enumerate(remove):
+        if not skills.is_skill_id(skill_id):
+            raise InvalidInputError(["body", "remove", str(i)], "Unknown skill id.")
+
+    await repo.lock_owner_skill_profile(session, owner_id)
+    profile = await repo.get_skill_profile(session, owner_id)
+    extracted = set(profile.extracted_skills) if profile else set()
+    before_added = list(profile.added_skills) if profile else []
+    before_removed = list(profile.removed_skills) if profile else []
+    before_custom = list(profile.custom_skills) if profile else []
+    added, removed, custom = list(before_added), list(before_removed), list(before_custom)
+
+    for raw in add:
+        term = clean_term(raw)
+        skill_id = skills.lookup(term)
+        if skill_id is not None:
+            if skill_id not in added:
+                added.append(skill_id)
+            removed = [r for r in removed if r != skill_id]
+        elif term.casefold() not in {c.casefold() for c in custom}:
+            custom.append(term)
+
+    for skill_id in remove:
+        added = [a for a in added if a != skill_id]
+        if skill_id in extracted and skill_id not in removed:
+            removed.append(skill_id)
+
+    dropped = {clean_term(t).casefold() for t in remove_custom}
+    custom = [c for c in custom if c.casefold() not in dropped]
+    if len(custom) > MAX_CUSTOM_SKILLS:
+        raise InvalidInputError(
+            ["body", "add"], f"You can keep at most {MAX_CUSTOM_SKILLS} custom skills."
+        )
+
+    if set(added) == set(before_added) and set(removed) == set(before_removed) and (
+        custom == before_custom
+    ):
+        return profile, False
+
+    await repo.save_skill_edits(
+        session,
+        owner_id,
+        added=skills.sorted_ids(added),
+        removed=skills.sorted_ids(removed),
+        custom=custom,
+    )
+    await publish(session, SkillProfileChanged(owner_id=owner_id))
+    return await repo.get_skill_profile(session, owner_id), True
+
+
+async def reset_skill_profile(
+    session: AsyncSession, owner_id: uuid.UUID
+) -> tuple[SkillProfile | None, bool]:
+    """Reset to extracted: clear the ``added`` / ``removed`` / ``custom`` sets and publish
+    ``SkillProfileChanged``. Returns ``(profile, changed)``; without a row or without edits
+    nothing is written or published."""
+    await repo.lock_owner_skill_profile(session, owner_id)
+    profile = await repo.get_skill_profile(session, owner_id)
+    if profile is None or not has_edits(profile):
+        return profile, False
+    await repo.save_skill_edits(session, owner_id, added=[], removed=[], custom=[])
+    await publish(session, SkillProfileChanged(owner_id=owner_id))
+    return await repo.get_skill_profile(session, owner_id), True

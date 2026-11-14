@@ -2,6 +2,10 @@
 
 Resume versions (FR-3): upload, list, activate, download (signed URL) and delete. Every
 ``{resume_id}`` route answers 404 for another Student's id and for an unknown id.
+
+Skill Profile (FR-4): read, edit (add / remove / remove custom), reset, and vocabulary
+suggestions. Upload, activate, edit and reset start the bounded after-response drain of the
+``priority`` queue (AD-4 priority path), which runs the extraction job.
 """
 
 import logging
@@ -11,14 +15,23 @@ from typing import Annotated
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Query, Response, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import skills
 from app.core.auth import Actor, current_actor
 from app.core.config import get_settings
 from app.core.db import get_session
 from app.core.jobs import PRIORITY_QUEUE, drain
 from app.modules.profile import service
 from app.modules.profile.files import MAX_FILE_BYTES
-from app.modules.profile.models import Resume
-from app.modules.profile.schemas import ResumeDownload, ResumeList, ResumeVersion
+from app.modules.profile.models import Resume, SkillProfile
+from app.modules.profile.schemas import (
+    ProfileSkill,
+    ResumeDownload,
+    ResumeList,
+    ResumeVersion,
+    SkillProfileEdit,
+    SkillProfileOut,
+    SkillRef,
+)
 from app.ports.file_store import FileStore, file_store_dependency
 
 logger = logging.getLogger("app.profile")
@@ -64,6 +77,7 @@ async def upload_resume(
     actor: CurrentActor,
     session: Session,
     store: Store,
+    background: BackgroundTasks,
 ) -> ResumeVersion:
     """Upload a new Resume version. The type is read from the file's content. It becomes
     the active version only when the Student has no active Resume."""
@@ -85,6 +99,8 @@ async def upload_resume(
     except BaseException:  # cancellation too: never orphan a private file
         await service.discard_upload(store, resume)
         raise
+    # A first (active) upload enqueued the Skill Profile extraction.
+    background.add_task(drain_priority)
     return _version(resume)
 
 
@@ -106,11 +122,12 @@ async def list_resumes(
     responses=_NOT_FOUND,
 )
 async def activate_resume(
-    resume_id: uuid.UUID, actor: CurrentActor, session: Session
+    resume_id: uuid.UUID, actor: CurrentActor, session: Session, background: BackgroundTasks
 ) -> ResumeVersion:
     resume, changed = await service.activate_resume(session, actor.id, resume_id)
     if changed:
         await session.commit()
+        background.add_task(drain_priority)
     return _version(resume)
 
 
@@ -144,3 +161,93 @@ async def delete_resume(
     await session.commit()
     background.add_task(drain_priority)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# --------------------------------------------------------------------------- Skill Profile
+
+
+def _skill_profile(profile: SkillProfile | None) -> SkillProfileOut:
+    if profile is None:
+        return SkillProfileOut(
+            status="none",
+            resume_id=None,
+            skills=[],
+            removed=[],
+            custom=[],
+            education=[],
+            experience=[],
+            vocab_version=None,
+            message=None,
+            has_edits=False,
+        )
+    extracted = set(profile.extracted_skills)
+    status = profile.status or "none"
+    return SkillProfileOut(
+        status=status,  # type: ignore[arg-type]
+        resume_id=profile.resume_id,
+        skills=[
+            ProfileSkill(
+                id=skill_id,
+                label=skills.label(skill_id),
+                source="extracted" if skill_id in extracted else "added",
+            )
+            for skill_id in skills.sorted_ids(service.effective_skills(profile))
+        ],
+        removed=[
+            SkillRef(id=skill_id, label=skills.label(skill_id))
+            for skill_id in skills.sorted_ids(profile.removed_skills)
+        ],
+        custom=list(profile.custom_skills),
+        education=[str(e) for e in profile.education],
+        experience=[str(e) for e in profile.experience],
+        vocab_version=profile.vocab_version,
+        message=service.UNREADABLE_MESSAGE if status in ("unreadable", "failed") else None,
+        has_edits=service.has_edits(profile),
+    )
+
+
+@router.get("/skill-profile", response_model=SkillProfileOut, operation_id="getSkillProfile")
+async def get_skill_profile(actor: CurrentActor, session: Session) -> SkillProfileOut:
+    return _skill_profile(await service.get_skill_profile(session, actor.id))
+
+
+@router.patch(
+    "/skill-profile",
+    response_model=SkillProfileOut,
+    operation_id="editSkillProfile",
+    responses={422: {"description": "Invalid terms, ids or too many custom skills", **_PROBLEM}},
+)
+async def edit_skill_profile(
+    body: SkillProfileEdit, actor: CurrentActor, session: Session, background: BackgroundTasks
+) -> SkillProfileOut:
+    """Add skills (a vocabulary term becomes a skill, anything else a custom skill), remove
+    skills by id, or remove custom skills. Edits are kept when a new Resume is extracted."""
+    profile, changed = await service.edit_skill_profile(
+        session, actor.id, add=body.add, remove=body.remove, remove_custom=body.remove_custom
+    )
+    if changed:
+        await session.commit()
+        background.add_task(drain_priority)
+    return _skill_profile(profile)
+
+
+@router.post(
+    "/skill-profile/reset", response_model=SkillProfileOut, operation_id="resetSkillProfile"
+)
+async def reset_skill_profile(
+    actor: CurrentActor, session: Session, background: BackgroundTasks
+) -> SkillProfileOut:
+    """Reset to extracted: drop every added, removed and custom skill."""
+    profile, changed = await service.reset_skill_profile(session, actor.id)
+    if changed:
+        await session.commit()
+        background.add_task(drain_priority)
+    return _skill_profile(profile)
+
+
+@router.get("/skills", response_model=list[SkillRef], operation_id="suggestSkills")
+async def suggest_skills(
+    q: Annotated[str, Query(min_length=1, max_length=50)],
+) -> list[SkillRef]:
+    """Up to 20 vocabulary skills matching ``q`` (prefix matches first), for autocomplete."""
+    return [SkillRef(id=s.id, label=s.label) for s in skills.suggest(q, limit=20)]

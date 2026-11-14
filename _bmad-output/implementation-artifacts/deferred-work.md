@@ -37,3 +37,12 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-5-upload-and-manage-resume-versions.md`
   summary: Add component tests for `ResumeManager` (precheck, upload/activate/delete flows, delete confirm) once `web` has a component or e2e harness.
   evidence: Only the pure helpers in `lib/resumes.ts` are tested.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-6-skill-profile-extracted-from-my-resume.md`
+  summary: Give `core.jobs` an on-exhausted hook so `profile.extract_resume` can mark the profile `failed` when `FileStore.get` keeps failing past the retry policy.
+  evidence: Today a Storage outage longer than the retry window leaves the profile `pending` forever.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-6-skill-profile-extracted-from-my-resume.md`
+  summary: The first change to `VOCAB_VERSION` must add a backfill job that re-normalises stored skill sets (and promotes custom skills that entered the vocabulary), as AD-8 requires.
+  evidence: `vocab_version` is stored but nothing acts on it. Raw text isn't kept, so re-extraction needs the file.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-6-skill-profile-extracted-from-my-resume.md`
+  summary: Add component tests for `SkillProfileEditor` (polling, timeout, 401, reset confirm) once `web` has a component or e2e harness.
+  evidence: Only `lib/skill-profile.ts` helpers are tested.

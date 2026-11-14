@@ -24,7 +24,7 @@ class SignedUrl:
 
 @dataclass
 class FakeFileStore:
-    """Objects by path. Set ``fail_put`` / ``fail_delete`` / ``fail_sign`` to make an
+    """Objects by path. Set ``fail_put`` / ``fail_delete`` / ``fail_sign`` / ``fail_get`` to make an
     operation raise :class:`FileStoreError`."""
 
     objects: dict[str, StoredObject] = field(default_factory=dict)
@@ -36,6 +36,8 @@ class FakeFileStore:
     fail_put_after_write: bool = False
     fail_delete: bool = False
     fail_sign: bool = False
+    fail_get: bool = False
+    gets: int = 0
 
     async def put(self, path: str, data: bytes, content_type: str) -> None:
         if self.fail_put:
@@ -44,6 +46,15 @@ class FakeFileStore:
         self.objects[path] = StoredObject(bytes(data), content_type)
         if self.fail_put_after_write:
             raise FileStoreError("fake put failure after write")
+
+    async def get(self, path: str) -> bytes:
+        if self.fail_get:
+            raise FileStoreError("fake get failure")
+        self.gets += 1
+        stored = self.objects.get(path)
+        if stored is None:
+            raise FileStoreError("fake get failure: no such object")
+        return stored.data
 
     async def delete(self, paths: Sequence[str]) -> None:
         if self.fail_delete:

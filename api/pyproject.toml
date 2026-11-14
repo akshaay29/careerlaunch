@@ -18,6 +18,10 @@ dependencies = [
     "httpx==0.28.1",
     # multipart/form-data parsing for UploadFile (Resume upload).
     "python-multipart==0.0.33",
+    # Resume text extraction. Imported ONLY by the sandboxed child process
+    # (app/modules/profile/extract_worker.py), never by the API process.
+    "pdfplumber==0.11.10",
+    "python-docx==1.2.0",
 ]
 
 [dependency-groups]
@@ -90,3 +94,13 @@ name = "Adapters never import modules"
 type = "forbidden"
 source_modules = ["app.adapters"]
 forbidden_modules = ["app.modules"]
+
+[[tool.importlinter.contracts]]
+name = "Resume parsers only in the sandboxed extraction child (Files convention)"
+type = "forbidden"
+source_modules = ["app"]
+forbidden_modules = ["pdfplumber", "docx", "pdfminer", "pypdfium2"]
+ignore_imports = [
+    "app.modules.profile.extract_worker -> pdfplumber",
+    "app.modules.profile.extract_worker -> docx",
+]

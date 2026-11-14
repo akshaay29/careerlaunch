@@ -25,6 +25,11 @@ class FileStore(Protocol):
         """Store ``data`` at ``path`` (overwriting an object already there)."""
         ...
 
+    async def get(self, path: str) -> bytes:
+        """The bytes stored at ``path``. Raises :class:`FileStoreError` when the object is
+        missing or the store fails."""
+        ...
+
     async def delete(self, paths: Sequence[str]) -> None:
         """Delete every object in ``paths``. Idempotent: a missing object is not an error."""
         ...
@@ -51,6 +56,9 @@ class LazyFileStore:
 
     async def put(self, path: str, data: bytes, content_type: str) -> None:
         await self._get().put(path, data, content_type)
+
+    async def get(self, path: str) -> bytes:
+        return await self._get().get(path)
 
     async def delete(self, paths: Sequence[str]) -> None:
         await self._get().delete(paths)

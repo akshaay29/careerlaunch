@@ -45,6 +45,14 @@ class ResumeActivated(Event):
     resume_id: uuid.UUID
 
 
+@dataclass(frozen=True)
+class SkillProfileChanged(Event):
+    """The owner's Skill Profile changed (FR-4): a new extraction was stored, or the Student
+    edited or reset it. Matching marks the owner's scores stale (Epic 3)."""
+
+    owner_id: uuid.UUID
+
+
 Handler = Callable[[AsyncSession, Any], Awaitable[None]]
 
 _subscribers: dict[type[Event], list[Handler]] = {}
@@ -53,10 +61,16 @@ _subscribers: dict[type[Event], list[Handler]] = {}
 def subscribe[E: Event](
     event_type: type[E], handler: Callable[[AsyncSession, E], Awaitable[None]]
 ) -> None:
-    """Register ``handler`` for ``event_type`` (exact type match). Order is registration order."""
+    """Register ``handler`` for ``event_type`` (exact type match). Order is registration order.
+
+    Registering the same handler for the same event again is a no-op, so app wiring that
+    runs more than once (one app per test) never makes a handler run twice.
+    """
     if not (isinstance(event_type, type) and issubclass(event_type, Event)):
         raise TypeError("event_type must be an Event subclass")
-    _subscribers.setdefault(event_type, []).append(handler)
+    handlers = _subscribers.setdefault(event_type, [])
+    if handler not in handlers:
+        handlers.append(handler)
 
 
 async def publish(session: AsyncSession, event: Event) -> None:
