@@ -50,11 +50,20 @@ class Settings(BaseSettings):
     # Legacy HS256 secret (the local CLI signs with it). Unset = HS256 tokens are rejected.
     supabase_jwt_secret: SecretStr | None = None
 
+    # Supabase Storage (FileStore adapter, Files convention). The service-role key is used only
+    # by the api, server side; required whenever the real Storage adapter is used.
+    supabase_service_role_key: SecretStr | None = None
+    # The PRIVATE bucket holding every Student file at <owner_id>/<kind>/<uuid>.
+    storage_bucket: str = Field(default="private", pattern=r"^[a-z0-9][a-z0-9_-]{1,62}$")
+    # Resume versions a Student may keep (FR-3); one more upload is a 409.
+    resume_max_versions: int = Field(default=10, ge=1, le=100)
+
     @field_validator(
         "migration_database_url",
         "drain_secret",
         "drain_secret_previous",
         "supabase_jwt_secret",
+        "supabase_service_role_key",
         mode="before",
     )
     @classmethod
@@ -85,6 +94,10 @@ class Settings(BaseSettings):
     @property
     def supabase_jwks_url(self) -> str:
         return f"{self.supabase_issuer}/.well-known/jwks.json"
+
+    @property
+    def supabase_storage_url(self) -> str:
+        return f"{self.supabase_url}/storage/v1"
 
     @property
     def cors_origins(self) -> list[str]:

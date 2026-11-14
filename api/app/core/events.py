@@ -36,6 +36,15 @@ class ConsentRevoked(Event):
     purpose: str
 
 
+@dataclass(frozen=True)
+class ResumeActivated(Event):
+    """``resume_id`` became the owner's one active Resume (FR-3). Published in the same
+    transaction that deactivated the previous one, so subscribers see the new state."""
+
+    owner_id: uuid.UUID
+    resume_id: uuid.UUID
+
+
 Handler = Callable[[AsyncSession, Any], Awaitable[None]]
 
 _subscribers: dict[type[Event], list[Handler]] = {}

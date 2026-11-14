@@ -31,3 +31,9 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-4-consent-for-provider-runs-and-the-shared-pool.md`
   summary: Unverified (medium if true): work can pass `require_consent` just before a withdrawal commits. Epic 2 callers must re-check the gate inside the job at the side effect, or lock the consent row.
   evidence: The gate is an unlocked read. It is settled by how the first callers (Epic 2 provider runs) use it.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-5-upload-and-manage-resume-versions.md`
+  summary: Story 1.6 must decide what happens when the active Resume is deleted (no version active), e.g. publish an `ActiveResumeCleared` event that the Skill Profile and later scoring react to.
+  evidence: `delete_resume` publishes nothing, so any consumer of "the active Resume" would keep using a deleted version.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-5-upload-and-manage-resume-versions.md`
+  summary: Add component tests for `ResumeManager` (precheck, upload/activate/delete flows, delete confirm) once `web` has a component or e2e harness.
+  evidence: Only the pure helpers in `lib/resumes.ts` are tested.

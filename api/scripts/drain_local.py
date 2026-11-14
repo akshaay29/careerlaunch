@@ -16,10 +16,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from app.adapters import supabase_storage  # noqa: E402
 from app.core.config import get_settings  # noqa: E402
 from app.core.db import dispose_engine  # noqa: E402
 from app.core.jobs import QUEUES, drain  # noqa: E402
 from app.core.logging import configure_logging  # noqa: E402
+from app.ports.file_store import LazyFileStore, install_file_store  # noqa: E402
 
 
 async def _main(every: float | None, queues: tuple[str, ...]) -> int:
@@ -42,6 +44,8 @@ def main() -> int:
     )
     args = parser.parse_args()
     configure_logging(get_settings().log_level)
+    # Tasks such as profile.delete_stored_files reach Storage through the installed FileStore.
+    install_file_store(LazyFileStore(supabase_storage.from_settings))
     queues = tuple(args.queue) if args.queue else QUEUES
     # psycopg's async driver cannot use Windows' default Proactor loop.
     loop_factory = asyncio.SelectorEventLoop if sys.platform == "win32" else None

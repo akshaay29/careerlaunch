@@ -60,6 +60,17 @@ jobs:
           DATABASE_URL: ${{ secrets.MIGRATION_DATABASE_URL }}
         run: uv run --no-dev python scripts/check_exposed_schema.py
 
+      - name: Ensure the private Storage bucket (idempotent, never public)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          STORAGE_BUCKET: ${{ vars.STORAGE_BUCKET || 'private' }}
+        run: |
+          for k in SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY; do
+            if [ -z "${!k}" ]; then echo "::error::$k secret is not set"; exit 1; fi
+          done
+          uv run --no-dev python scripts/ensure_bucket.py
+
   deploy-api:
     name: Deploy api (Render deploy hook)
     needs: migrate

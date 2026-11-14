@@ -17,10 +17,12 @@ from fastapi import APIRouter, Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from app.adapters import supabase_storage
 from app.core.auth import JwksCache, current_actor, install_auth, require_admin
 from app.core.config import Settings, get_settings
 from app.core.db import dispose_engine
 from app.core.errors import install_error_handlers
+from app.core.limits import BodySizeLimitMiddleware
 from app.core.internal import router as internal_router
 from app.core.logging import REQUEST_ID_HEADER, RequestIdMiddleware, configure_logging
 from app.modules.accounts.router import admin_router as accounts_admin_router
@@ -28,13 +30,18 @@ from app.modules.accounts.router import router as accounts_router
 from app.modules.accounts.service import get_or_provision
 from app.modules.listings.router import router as listings_router
 from app.modules.matching.router import router as matching_router
+from app.modules.profile.files import MAX_FILE_BYTES
 from app.modules.profile.router import router as profile_router
+from app.modules.profile.service import TOO_LARGE_DETAIL
 from app.modules.tracker.router import router as tracker_router
+from app.ports.file_store import FileStore, LazyFileStore, install_file_store
 
 API_V1 = "/api/v1"
 API_ADMIN = f"{API_V1}/admin"
 API_PUBLIC = f"{API_V1}/public"
 INTERNAL = "/internal"
+# Room for the multipart boundaries and part headers around a 5 MB file.
+MULTIPART_OVERHEAD_BYTES = 64 * 1024
 
 
 class Health(BaseModel):
@@ -85,7 +92,24 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await dispose_engine()
 
 
-def create_app(settings: Settings | None = None, jwks: JwksCache | None = None) -> FastAPI:
+def install_files(app: FastAPI, store: FileStore | None = None) -> FileStore:
+    """Wire the FileStore (``app.state.file_store`` for routers, process-wide for tasks).
+
+    Without an injected store, the Supabase Storage adapter is built from Settings on first
+    use, so creating the app (OpenAPI export, tests) never needs the service-role key.
+    """
+    if store is None:
+        store = LazyFileStore(supabase_storage.from_settings)
+    app.state.file_store = store
+    install_file_store(store)
+    return store
+
+
+def create_app(
+    settings: Settings | None = None,
+    jwks: JwksCache | None = None,
+    file_store: FileStore | None = None,
+) -> FastAPI:
     settings = settings or get_settings()
     configure_logging(settings.log_level)
 
@@ -96,6 +120,16 @@ def create_app(settings: Settings | None = None, jwks: JwksCache | None = None) 
     )
 
     install_error_handlers(app)  # first => its middleware is innermost
+    # Inside CORS (added below), so a browser can read the 413 detail.
+    app.add_middleware(
+        BodySizeLimitMiddleware,
+        limits={
+            ("POST", f"{API_V1}/resumes"): (
+                MAX_FILE_BYTES + MULTIPART_OVERHEAD_BYTES,
+                TOO_LARGE_DETAIL,
+            )
+        },
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
@@ -108,6 +142,7 @@ def create_app(settings: Settings | None = None, jwks: JwksCache | None = None) 
 
     # The role is loaded by accounts.service, injected here so core never imports modules.
     install_auth(app, account_loader=get_or_provision, jwks=jwks)
+    install_files(app, file_store)
 
     # Admin and public first: routes match in mount order, so a token-only route such as
     # /{id}/... can never shadow /api/v1/admin/* or /api/v1/public/*.
