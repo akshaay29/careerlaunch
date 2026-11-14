@@ -22,6 +22,11 @@ from app.ports.file_store import FileStoreError
 logger = logging.getLogger("app.adapters.supabase_storage")
 
 DEFAULT_TIMEOUT_SECONDS = 30.0
+# Storage's list endpoint pages by limit/offset; its bulk delete takes up to 1000 paths.
+LIST_PAGE_SIZE = 100
+DELETE_BATCH_SIZE = 100
+# Paths are ``<owner_id>/<kind>/<uuid>``; anything deeper than this is not ours.
+MAX_LIST_DEPTH = 8
 
 
 def _quote_path(path: str) -> str:
@@ -127,6 +132,60 @@ class SupabaseStorageFileStore:
         if response.status_code == 404 or response.is_success:
             return
         raise self._fail("delete", response)
+
+    async def _list_folder(self, folder: str) -> list[dict[str, Any]]:
+        """Every entry directly under ``folder`` (paged). Folders have ``id: null``."""
+        entries: list[dict[str, Any]] = []
+        offset = 0
+        while True:
+            response = await self._request(
+                "list",
+                "POST",
+                f"/object/list/{quote(self._bucket, safe='')}",
+                json={
+                    "prefix": folder,
+                    "limit": LIST_PAGE_SIZE,
+                    "offset": offset,
+                    "sortBy": {"column": "name", "order": "asc"},
+                },
+            )
+            if not response.is_success:
+                raise self._fail("list", response)
+            try:
+                page = response.json()
+            except ValueError as exc:
+                raise FileStoreError("storage list failed: invalid response") from exc
+            if not isinstance(page, list):
+                raise FileStoreError("storage list failed: invalid response")
+            entries.extend(e for e in page if isinstance(e, dict))
+            if len(page) < LIST_PAGE_SIZE:
+                return entries
+            offset += LIST_PAGE_SIZE
+
+    async def _object_paths(self, folder: str, depth: int = 0) -> list[str]:
+        if depth > MAX_LIST_DEPTH:
+            raise FileStoreError("storage list failed: folder nesting too deep")
+        paths: list[str] = []
+        for entry in await self._list_folder(folder):
+            name = entry.get("name")
+            if not isinstance(name, str) or not name or "/" in name or name in (".", ".."):
+                continue
+            full = f"{folder}/{name}"
+            if entry.get("id") is None:
+                paths.extend(await self._object_paths(full, depth + 1))
+            else:
+                paths.append(full)
+        return paths
+
+    async def delete_prefix(self, prefix: str) -> int:
+        """List every object under ``prefix`` (recursing into folders), then delete them in
+        batches through :meth:`delete`. Returns the number of objects deleted."""
+        folder = prefix.rstrip("/")
+        _quote_path(folder)  # validate: non-empty, relative, no ``..``
+        paths = await self._object_paths(folder)
+        for start in range(0, len(paths), DELETE_BATCH_SIZE):
+            await self.delete(paths[start : start + DELETE_BATCH_SIZE])
+        return len(paths)
 
     async def signed_download_url(
         self, path: str, expires_in_seconds: int, download_name: str

@@ -29,7 +29,7 @@ from app.modules.profile.files import DOCX, PDF
 
 WORKER_PATH = Path(__file__).with_name("extract_worker.py")
 
-# Must fit the after-response priority drain's work budget (router
+# Must fit the after-response priority drain's work budget (core.jobs
 # PRIORITY_DRAIN_TIMEOUT_SECONDS 30 - core.jobs WORKER_SHUTDOWN_GRACE_SECONDS 5 = 25 s), so the
 # parser's own timeout fires (-> ``failed``) before the drain cancels the job.
 TIMEOUT_SECONDS = 20.0

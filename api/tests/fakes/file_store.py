@@ -63,6 +63,17 @@ class FakeFileStore:
             self.deleted.append(path)
             self.objects.pop(path, None)
 
+    async def delete_prefix(self, prefix: str) -> int:
+        # Same prefix rules as the Supabase adapter (see the FileStore port).
+        folder = prefix.rstrip("/")
+        if not folder or folder.startswith("/") or ".." in folder.split("/"):
+            raise ValueError(f"invalid prefix {prefix!r}")
+        if self.fail_delete:
+            raise FileStoreError("fake delete failure")
+        paths = self.paths_under(f"{folder}/")
+        await self.delete(paths)
+        return len(paths)
+
     async def signed_download_url(
         self, path: str, expires_in_seconds: int, download_name: str
     ) -> str:

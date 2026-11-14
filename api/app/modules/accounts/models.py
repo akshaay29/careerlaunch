@@ -1,4 +1,5 @@
-"""accounts.models: ``accounts`` (DDL in migration 0004_accounts) and ``consents`` (0005)."""
+"""accounts.models: ``accounts`` (DDL in migration 0004_accounts), ``consents`` (0005) and
+``deleted_accounts`` (0010)."""
 
 import uuid
 from datetime import datetime
@@ -44,3 +45,25 @@ class Consent(Base):
     # 'revoked' (withdrawn by the Student) or 'superseded' (newer version granted); set with
     # revoked_at.
     end_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class DeletedAccount(Base):
+    """Tombstone of a deleted account (DDL in migration 0010_deleted_accounts).
+
+    Global, no foreign key, and nothing but the Auth uid and the time: no email or other
+    personal data. Stops a still-valid access token from re-provisioning the account.
+    """
+
+    __tablename__ = "deleted_accounts"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
+    deleted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    # Set by the purge jobs when they succeed; NULL means that part is still pending.
+    files_purged_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    auth_deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )

@@ -50,3 +50,10 @@ class ConsentGrant(BaseModel):
     """The version of the text the Student was shown and agreed to."""
 
     version: str = Field(min_length=1, max_length=32)
+
+
+class AccountDeletion(BaseModel):
+    """Confirms an account deletion: the account's email, typed by the Student. Compared
+    after trimming and ignoring case."""
+
+    confirm_email: str = Field(max_length=320)

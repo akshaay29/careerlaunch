@@ -9,6 +9,7 @@ signature only admits ids, a short type name and integer counts.
 """
 
 import json
+import logging
 import re
 import uuid
 from collections.abc import Mapping
@@ -16,14 +17,22 @@ from collections.abc import Mapping
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+logger = logging.getLogger("app.ops")
+
 # Kinds and entity types are short machine names, e.g. ``job.succeeded`` / ``accounts.purge_files``.
 _NAME_RE = re.compile(r"^[a-z][a-z0-9_.:-]{0,99}$")
 _COUNT_KEY_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
+# An owner whose account no longer exists (deleted, e.g. a purge job running after account
+# deletion) is stored as NULL instead of failing the foreign key (AD-17: Student FKs on
+# global rows are NULL once the Student is gone).
 _INSERT = text(
     """
     INSERT INTO ops_events (id, kind, owner_id, entity_type, entity_id, counts)
-    VALUES (:id, :kind, :owner_id, :entity_type, :entity_id, CAST(:counts AS jsonb))
+    SELECT :id, :kind,
+           (SELECT a.id FROM accounts a WHERE a.id = CAST(:owner_id AS uuid)),
+           :entity_type, :entity_id, CAST(:counts AS jsonb)
+    RETURNING owner_id
     """
 )
 
@@ -61,7 +70,9 @@ async def record_event(
     entity_id: uuid.UUID | None = None,
     counts: dict[str, int] | None = None,
 ) -> uuid.UUID:
-    """Append one ``ops_events`` row on ``session`` (no commit). Returns the new id."""
+    """Append one ``ops_events`` row on ``session`` (no commit). Returns the new id.
+
+    An ``owner_id`` with no ``accounts`` row (a deleted Student) is stored as NULL."""
     _check_name("kind", kind)
     if entity_type is not None:
         _check_name("entity_type", entity_type)
@@ -70,17 +81,25 @@ async def record_event(
     payload = _check_counts(counts)
 
     event_id = uuid.uuid7()
-    await session.execute(
-        _INSERT,
-        {
-            "id": event_id,
-            "kind": kind,
-            "owner_id": owner_id,
-            "entity_type": entity_type,
-            "entity_id": entity_id,
-            "counts": json.dumps(payload),
-        },
-    )
+    stored_owner = (
+        await session.execute(
+            _INSERT,
+            {
+                "id": event_id,
+                "kind": kind,
+                "owner_id": owner_id,
+                "entity_type": entity_type,
+                "entity_id": entity_id,
+                "counts": json.dumps(payload),
+            },
+        )
+    ).scalar_one()
+    if owner_id is not None and stored_owner is None:
+        # Expected for a deleted owner (purge jobs); otherwise a caller passed a wrong id.
+        logger.warning(
+            "ops_event_owner_dropped",
+            extra={"event_id": str(event_id), "kind": kind, "owner_id": str(owner_id)},
+        )
     return event_id
 
 

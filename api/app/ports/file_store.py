@@ -34,6 +34,17 @@ class FileStore(Protocol):
         """Delete every object in ``paths``. Idempotent: a missing object is not an error."""
         ...
 
+    async def delete_prefix(self, prefix: str) -> int:
+        """Delete every object under ``prefix`` (e.g. ``<owner_id>/``), recursing into
+        folders, and return how many objects were deleted. Idempotent: a prefix with no
+        objects returns 0.
+
+        Prefix rules (every implementation): trailing ``/`` are stripped and the rest names a
+        folder, so ``a/`` and ``a`` both mean everything under ``a/``. An empty prefix (after
+        stripping), an absolute prefix (leading ``/``) or one with a ``..`` segment raises
+        ``ValueError`` before anything is deleted."""
+        ...
+
     async def signed_download_url(
         self, path: str, expires_in_seconds: int, download_name: str
     ) -> str:
@@ -62,6 +73,9 @@ class LazyFileStore:
 
     async def delete(self, paths: Sequence[str]) -> None:
         await self._get().delete(paths)
+
+    async def delete_prefix(self, prefix: str) -> int:
+        return await self._get().delete_prefix(prefix)
 
     async def signed_download_url(
         self, path: str, expires_in_seconds: int, download_name: str

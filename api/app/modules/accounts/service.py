@@ -1,11 +1,12 @@
-"""accounts.service: provisioning, admin promotion (AD-5) and consent (AD-11).
+"""accounts.service: provisioning, admin promotion (AD-5), consent (AD-11) and account
+deletion (FR-2, AD-17).
 
 Takes the session; never commits.
 """
 
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Literal, cast
 
 from sqlalchemy.exc import IntegrityError
@@ -16,11 +17,14 @@ from app.core.errors import (
     ConflictError,
     ConsentRequiredError,
     ConsentVersionMismatchError,
+    InvalidInputError,
     NotFoundError,
+    UnauthorizedError,
 )
-from app.core.events import ConsentRevoked, publish
-from app.core.ops import record_audit
-from app.modules.accounts import consent_text, repo
+from app.core.events import AccountDeleting, ConsentRevoked, publish
+from app.core.jobs import PRIORITY_QUEUE, enqueue
+from app.core.ops import record_audit, record_event
+from app.modules.accounts import consent_text, repo, tasks
 from app.modules.accounts.consent_text import ConsentPurpose, ConsentText
 from app.modules.accounts.models import Account, Consent
 
@@ -56,6 +60,8 @@ async def get_or_provision(
         return _actor(account), False
     try:
         async with session.begin_nested():
+            # Conditional on "no tombstone" in the same statement, so a deletion committing
+            # concurrently cannot be undone by re-provisioning.
             account = await repo.upsert_email(session, account_id, email)
     except IntegrityError as exc:
         if _constraint_name(exc) != EMAIL_UNIQUE_CONSTRAINT:
@@ -63,6 +69,9 @@ async def get_or_provision(
         # The email belongs to another accounts row (e.g. an Auth user deleted outside the app
         # and re-created with the same address).
         raise ConflictError("This email is already linked to another account.") from exc
+    if account is None:
+        # A deleted account's tokens stay valid until they expire; never re-provision it.
+        raise UnauthorizedError("This account has been deleted.")
     return _actor(account), True
 
 
@@ -175,3 +184,64 @@ async def require_consent(
     text = consent_text.current_text(purpose)
     if not await repo.has_active_consent(session, owner_id, text.purpose.value, text.version):
         raise ConsentRequiredError(text.purpose.value)
+
+
+# --------------------------------------------------------------------------- deletion (AD-17)
+
+ACCOUNT_DELETED_EVENT = "account.deleted"
+CONFIRM_EMAIL_MISMATCH = "Type the email address of your account to confirm."
+
+
+async def delete_account(session: AsyncSession, owner_id: uuid.UUID, confirm_email: str) -> bool:
+    """Delete the account ``owner_id`` and everything it owns, in the caller's unit of work.
+
+    ``confirm_email`` must equal the account email after trimming and ignoring case, else
+    :class:`InvalidInputError` on ``confirm_email`` and nothing is written. Then, in order:
+    publish ``AccountDeleting`` (subscribers still see the owner's rows), insert the
+    tombstone, record ``account.deleted`` (no owner id), enqueue the idempotent
+    ``purge_files`` and ``delete_auth_user`` jobs, and delete the ``accounts`` row (which
+    cascades every Student-owned row and sets global rows' references to NULL).
+
+    Returns True when this call deleted the account, False when a concurrent deletion had
+    already done it (tombstone present; nothing written, no new jobs).
+    """
+    account = await repo.get_for_update(session, owner_id)
+    if account is None:
+        if await repo.is_deleted(session, owner_id):
+            return False
+        raise NotFoundError("No account has this id.")
+    if normalize_email(confirm_email) != normalize_email(account.email):
+        raise InvalidInputError(["body", "confirm_email"], CONFIRM_EMAIL_MISMATCH)
+
+    await publish(session, AccountDeleting(owner_id=owner_id))
+    await repo.insert_tombstone(session, owner_id)
+    await record_event(session, ACCOUNT_DELETED_EVENT, owner_id=None, counts={})
+    await _enqueue_purge(session, tasks.PURGE_FILES, owner_id)
+    await _enqueue_purge(session, tasks.DELETE_AUTH_USER, owner_id)
+    await repo.delete_account(session, owner_id)
+    return True
+
+
+async def _enqueue_purge(session: AsyncSession, task_name: str, owner_id: uuid.UUID) -> None:
+    key = f"{task_name}:account:{owner_id}"
+    await enqueue(session, task_name, key, queue=PRIORITY_QUEUE, owner_id=owner_id)
+
+
+# A deletion younger than this is left to its own jobs and their retries.
+RESUME_AFTER = timedelta(hours=1)
+RESUME_BATCH = 500
+
+
+async def resume_pending_deletions(session: AsyncSession) -> int:
+    """Re-enqueue the missing ``purge_files`` / ``delete_auth_user`` job(s) of every tombstone
+    older than :data:`RESUME_AFTER` that is not finished. Returns the number of jobs enqueued.
+    The keys are the original ones, so the queueing lock drops a duplicate of a pending run."""
+    enqueued = 0
+    for tombstone in await repo.pending_deletions(session, RESUME_AFTER, RESUME_BATCH):
+        if tombstone.files_purged_at is None:
+            await _enqueue_purge(session, tasks.PURGE_FILES, tombstone.id)
+            enqueued += 1
+        if tombstone.auth_deleted_at is None:
+            await _enqueue_purge(session, tasks.DELETE_AUTH_USER, tombstone.id)
+            enqueued += 1
+    return enqueued

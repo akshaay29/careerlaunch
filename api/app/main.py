@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from app.adapters import supabase_storage
+from app.adapters import supabase_auth, supabase_storage
 from app.core.auth import JwksCache, current_actor, install_auth, require_admin
 from app.core.config import Settings, get_settings
 from app.core.db import dispose_engine
@@ -35,6 +35,7 @@ from app.modules.profile.files import MAX_FILE_BYTES
 from app.modules.profile.router import router as profile_router
 from app.modules.profile.service import DOCUMENT_TOO_LARGE_DETAIL, TOO_LARGE_DETAIL
 from app.modules.tracker.router import router as tracker_router
+from app.ports.auth_admin import AuthAdmin, LazyAuthAdmin, install_auth_admin
 from app.ports.file_store import FileStore, LazyFileStore, install_file_store
 
 API_V1 = "/api/v1"
@@ -106,10 +107,22 @@ def install_files(app: FastAPI, store: FileStore | None = None) -> FileStore:
     return store
 
 
+def install_auth_admin_port(app: FastAPI, admin: AuthAdmin | None = None) -> AuthAdmin:
+    """Wire the AuthAdmin port (``app.state.auth_admin``, process-wide for tasks), like
+    :func:`install_files`: without an injected one, the Supabase Auth admin adapter is built
+    from Settings on first use."""
+    if admin is None:
+        admin = LazyAuthAdmin(supabase_auth.from_settings)
+    app.state.auth_admin = admin
+    install_auth_admin(admin)
+    return admin
+
+
 def create_app(
     settings: Settings | None = None,
     jwks: JwksCache | None = None,
     file_store: FileStore | None = None,
+    auth_admin: AuthAdmin | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
     configure_logging(settings.log_level)
@@ -148,6 +161,7 @@ def create_app(
     # The role is loaded by accounts.service, injected here so core never imports modules.
     install_auth(app, account_loader=get_or_provision, jwks=jwks)
     install_files(app, file_store)
+    install_auth_admin_port(app, auth_admin)
     # Domain-event subscribers, registered explicitly at startup (idempotent).
     profile_events.register()
 
