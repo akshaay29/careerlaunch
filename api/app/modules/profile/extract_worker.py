@@ -79,13 +79,15 @@ def _docx_text(parser: Any, data: bytes, max_chars: int) -> tuple[str, int]:
 def main(argv: list[str]) -> int:
     kind, max_pages, max_chars, max_memory = argv[0], int(argv[1]), int(argv[2]), int(argv[3])
     max_cpu = int(argv[4]) if len(argv) > 4 else 30
+    if kind not in (PDF, DOCX):
+        return 2
+    # Limits first: everything the parser library does, including its import and native
+    # code it maps, then runs inside the sandbox.
+    _set_limits(max_memory, max_cpu)
     if kind == PDF:
         import pdfplumber as parser
-    elif kind == DOCX:
-        import docx as parser
     else:
-        return 2
-    _set_limits(max_memory, max_cpu)
+        import docx as parser
     data = sys.stdin.buffer.read()
     if kind == PDF:
         text, pages = _pdf_text(parser, data, max_pages, max_chars)
