@@ -14,13 +14,16 @@ dependencies = [
     "procrastinate==3.10.0",
     "pyjwt[crypto]==2.15.1",
     "cryptography==50.0.2",
+    # Supabase Storage REST client for the FileStore adapter (no vendor SDK, AD-3).
+    "httpx==0.28.1",
+    # multipart/form-data parsing for UploadFile (Resume upload).
+    "python-multipart==0.0.33",
 ]
 
 [dependency-groups]
 dev = [
     "pytest==9.2.0",
     "pytest-asyncio==1.4.1.post1",
-    "httpx==0.28.1",
     "import-linter==2.16",
 ]
 

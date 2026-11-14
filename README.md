@@ -28,8 +28,9 @@ cp .env.example .env
 
 # 1. Supabase CLI stack (Postgres on :54322, Auth on :54321, Studio on :54323, Mailpit on :54324)
 npx supabase start
-npx supabase status   # note the anon key and the JWT secret
+npx supabase status   # note the anon key, the service_role key and the JWT secret
 #    -> .env:           SUPABASE_JWT_SECRET=<JWT secret>
+#                       SUPABASE_SERVICE_ROLE_KEY=<service_role key>   (Storage, api only)
 #    -> web/.env.local: NEXT_PUBLIC_API_URL=http://localhost:8000
 #                       NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321
 #                       NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon key>
@@ -212,6 +213,34 @@ Supabase dashboard → Authentication:
   `RIGHTS_NOTICE_VERSION`. A **new purpose** also needs a migration widening
   `consents_purpose_check`. Run `npm run gen:api` only if the API shape changed.
 
+## Resumes and file storage (Story 1.5)
+
+- **Storage:** every Student file lives in ONE private Supabase Storage bucket
+  (`STORAGE_BUCKET`, default `private`) at `<owner_id>/<kind>/<uuid>`; the path is always
+  chosen by the server. Only the api reaches it, through the `FileStore` port
+  (`app/ports/file_store.py`), implemented by `app/adapters/supabase_storage/` (Storage REST
+  API over `httpx`, service-role key `SUPABASE_SERVICE_ROLE_KEY`). Tests use the in-memory
+  fake in `api/tests/fakes/file_store.py`.
+- **Bucket:** locally `supabase/config.toml` declares `[storage.buckets.private]` (private, PDF/DOCX MIME types only,
+  5 MiB limit). `npx supabase start` creates it on a fresh stack; on a stack that already
+  existed, run `npx supabase seed buckets` or `uv run python scripts/ensure_bucket.py`. Hosted, `api/scripts/ensure_bucket.py`
+  creates it if missing (idempotent, never public); `migrate-deploy.yml` runs it after the
+  migrations, so add the GitHub `production` secrets `SUPABASE_URL` and
+  `SUPABASE_SERVICE_ROLE_KEY` (and optionally the variable `STORAGE_BUCKET`).
+- **Rules:** PDF (`%PDF-`) or DOCX (a ZIP containing `word/document.xml`), sniffed from the
+  content, up to 5 MB (413 / 415 otherwise, nothing stored). At most `RESUME_MAX_VERSIONS`
+  (default 10) versions per Student (409 "Delete an old version first"). A partial unique
+  index keeps one active version per Student; an upload becomes active only when none is.
+  Activating publishes `core.events.ResumeActivated(owner_id, resume_id)` in the same
+  transaction.
+- **API:** `POST /api/v1/resumes` (multipart `file`), `GET /api/v1/resumes` (`limit`,
+  `cursor`; `items`, `next_cursor`), `POST /api/v1/resumes/{id}/activate`,
+  `GET /api/v1/resumes/{id}/download` (`{url, expires_at}`: a signed attachment URL valid for
+  5 minutes; bytes never pass through the api) and `DELETE /api/v1/resumes/{id}` (the row goes
+  now; the object is removed by the `profile.delete_stored_files` job, drained right after
+  the response). Another Student's id is a 404.
+- **Web:** onboarding step 2 (after consent) and `/settings/resumes`.
+
 ## CI (`.github/workflows/ci.yml`)
 
 On every push and PR: Postgres 17 service + Supabase roles SQL → `alembic upgrade head` →
@@ -230,7 +259,8 @@ failed migration stops the release. Nothing deploys on push.
    or the IPv6 direct host). Leave Data API exposed schemas at `public, graphql_public`.
 2. **Render (Free)** — create a Blueprint from `render.yaml` (one web service, `rootDir: api`,
    auto-deploy off). Set `DATABASE_URL` (session pooler URL) and `WEB_ORIGIN` (the Vercel
-   production URL), `SUPABASE_URL` and (if still used) `SUPABASE_JWT_SECRET`. Copy the
+   production URL), `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` and (if still used)
+   `SUPABASE_JWT_SECRET`. Copy the
    service's **Deploy Hook** URL.
 3. **Vercel (Hobby)** — import the project with `web/` as the working directory (the CLI
    deploys from `web/`, so leave *Root Directory* empty); Git auto-deploy is disabled by
@@ -239,10 +269,11 @@ failed migration stops the release. Nothing deploys on push.
    ids from `web/.vercel/project.json` after `npx vercel link`, and create a token.
 4. **GitHub `production` environment secrets** — `MIGRATION_DATABASE_URL`,
    `RENDER_DEPLOY_HOOK_URL`, `RENDER_API_KEY`, `RENDER_SERVICE_ID` (the `srv-...` id),
-   `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`, and for the health/backup drain
+   `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`, `SUPABASE_URL` and
+   `SUPABASE_SERVICE_ROLE_KEY` (for `ensure_bucket.py`), and for the health/backup drain
    `DRAIN_SECRET` and `API_BASE_URL` (see "Background jobs").
 5. Publish a (non-prerelease) GitHub release, or run the workflow manually from `main`, to
-   migrate, run the exposed-schema check on prod, deploy the migrated commit to Render, wait
+   migrate, run the exposed-schema check on prod, ensure the private Storage bucket, deploy the migrated commit to Render, wait
    for it to be live, then deploy web.
 
 Every configuration key and where it lives is listed in [`.env.example`](.env.example).

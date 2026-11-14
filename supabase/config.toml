@@ -122,6 +122,17 @@ enabled = true
 # The maximum file size allowed (e.g. "5MB", "500KB").
 file_size_limit = "50MiB"
 
+# CareerLaunch: the PRIVATE bucket for every Student file (<owner_id>/<kind>/<uuid>). The api
+# reaches it with the service-role key only. Hosted projects get the same bucket from
+# api/scripts/ensure_bucket.py (migrate-deploy.yml).
+[storage.buckets.private]
+public = false
+file_size_limit = "5MiB"
+allowed_mime_types = [
+  "application/pdf",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+]
+
 # Uncomment to configure local storage buckets
 # [storage.buckets.images]
 # public = false

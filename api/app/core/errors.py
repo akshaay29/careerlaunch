@@ -68,6 +68,18 @@ class ConflictError(DomainError):
     title = "Conflict"
 
 
+class PayloadTooLargeError(DomainError):
+    status = 413
+    slug = "payload-too-large"
+    title = "Payload too large"
+
+
+class UnsupportedMediaTypeError(DomainError):
+    status = 415
+    slug = "unsupported-media-type"
+    title = "Unsupported media type"
+
+
 class ConsentRequiredError(DomainError):
     """The Student has no active consent on the current version for ``purpose`` (AD-11)."""
 

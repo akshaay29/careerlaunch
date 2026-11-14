@@ -42,3 +42,11 @@ services:
         sync: false
       - key: SUPABASE_JWT_SECRET
         sync: false
+      # Supabase Storage (FileStore): service-role key (secret, api only), the private bucket
+      # and the Resume version cap.
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: STORAGE_BUCKET
+        value: private
+      - key: RESUME_MAX_VERSIONS
+        value: "10"

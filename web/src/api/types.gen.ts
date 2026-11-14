@@ -5,6 +5,18 @@ export type ClientOptions = {
 };
 
 /**
+ * Body_uploadResume
+ */
+export type BodyUploadResume = {
+    /**
+     * File
+     *
+     * A PDF or DOCX file of 5 MB or less
+     */
+    file: Blob | File;
+};
+
+/**
  * ConsentGrant
  *
  * The version of the text the Student was shown and agreed to.
@@ -113,6 +125,71 @@ export type Me = {
      * Role
      */
     role: 'student' | 'admin';
+};
+
+/**
+ * ResumeDownload
+ *
+ * A signed URL that downloads the file as an attachment; it stops working at
+ * ``expires_at`` (5 minutes or less).
+ */
+export type ResumeDownload = {
+    /**
+     * Url
+     */
+    url: string;
+    /**
+     * Expires At
+     */
+    expires_at: string;
+};
+
+/**
+ * ResumeList
+ *
+ * Newest first. Pass ``next_cursor`` as ``cursor`` to get the next page (null = done).
+ */
+export type ResumeList = {
+    /**
+     * Items
+     */
+    items: Array<ResumeVersion>;
+    /**
+     * Next Cursor
+     */
+    next_cursor: string | null;
+};
+
+/**
+ * ResumeVersion
+ *
+ * One uploaded Resume version. ``filename`` is untrusted text: render it as plain text.
+ */
+export type ResumeVersion = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Filename
+     */
+    filename: string;
+    /**
+     * Content Type
+     */
+    content_type: 'application/pdf' | 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    /**
+     * Size Bytes
+     */
+    size_bytes: number;
+    /**
+     * Is Active
+     */
+    is_active: boolean;
+    /**
+     * Created At
+     */
+    created_at: string;
 };
 
 /**
@@ -280,3 +357,176 @@ export type GrantConsentResponses = {
 };
 
 export type GrantConsentResponse = GrantConsentResponses[keyof GrantConsentResponses];
+
+export type ListResumesData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Limit
+         */
+        limit?: number;
+        /**
+         * Cursor
+         */
+        cursor?: string | null;
+    };
+    url: '/api/v1/resumes';
+};
+
+export type ListResumesErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ListResumesError = ListResumesErrors[keyof ListResumesErrors];
+
+export type ListResumesResponses = {
+    /**
+     * Successful Response
+     */
+    200: ResumeList;
+};
+
+export type ListResumesResponse = ListResumesResponses[keyof ListResumesResponses];
+
+export type UploadResumeData = {
+    body: BodyUploadResume;
+    path?: never;
+    query?: never;
+    url: '/api/v1/resumes';
+};
+
+export type UploadResumeErrors = {
+    /**
+     * The version cap is reached
+     */
+    409: unknown;
+    /**
+     * The file is larger than 5 MB
+     */
+    413: unknown;
+    /**
+     * The file is not a PDF or DOCX
+     */
+    415: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type UploadResumeError = UploadResumeErrors[keyof UploadResumeErrors];
+
+export type UploadResumeResponses = {
+    /**
+     * Successful Response
+     */
+    201: ResumeVersion;
+};
+
+export type UploadResumeResponse = UploadResumeResponses[keyof UploadResumeResponses];
+
+export type ActivateResumeData = {
+    body?: never;
+    path: {
+        /**
+         * Resume Id
+         */
+        resume_id: string;
+    };
+    query?: never;
+    url: '/api/v1/resumes/{resume_id}/activate';
+};
+
+export type ActivateResumeErrors = {
+    /**
+     * No such Resume version for this Student
+     */
+    404: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ActivateResumeError = ActivateResumeErrors[keyof ActivateResumeErrors];
+
+export type ActivateResumeResponses = {
+    /**
+     * Successful Response
+     */
+    200: ResumeVersion;
+};
+
+export type ActivateResumeResponse = ActivateResumeResponses[keyof ActivateResumeResponses];
+
+export type GetResumeDownloadData = {
+    body?: never;
+    path: {
+        /**
+         * Resume Id
+         */
+        resume_id: string;
+    };
+    query?: never;
+    url: '/api/v1/resumes/{resume_id}/download';
+};
+
+export type GetResumeDownloadErrors = {
+    /**
+     * No such Resume version for this Student
+     */
+    404: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type GetResumeDownloadError = GetResumeDownloadErrors[keyof GetResumeDownloadErrors];
+
+export type GetResumeDownloadResponses = {
+    /**
+     * Successful Response
+     */
+    200: ResumeDownload;
+};
+
+export type GetResumeDownloadResponse = GetResumeDownloadResponses[keyof GetResumeDownloadResponses];
+
+export type DeleteResumeData = {
+    body?: never;
+    path: {
+        /**
+         * Resume Id
+         */
+        resume_id: string;
+    };
+    query?: never;
+    url: '/api/v1/resumes/{resume_id}';
+};
+
+export type DeleteResumeErrors = {
+    /**
+     * No such Resume version for this Student
+     */
+    404: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type DeleteResumeError = DeleteResumeErrors[keyof DeleteResumeErrors];
+
+export type DeleteResumeResponses = {
+    /**
+     * Successful Response
+     */
+    204: void;
+};
+
+export type DeleteResumeResponse = DeleteResumeResponses[keyof DeleteResumeResponses];
