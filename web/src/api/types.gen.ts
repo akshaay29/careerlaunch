@@ -5,6 +5,87 @@ export type ClientOptions = {
 };
 
 /**
+ * ConsentGrant
+ *
+ * The version of the text the Student was shown and agreed to.
+ */
+export type ConsentGrant = {
+    /**
+     * Version
+     */
+    version: string;
+};
+
+/**
+ * ConsentOverview
+ */
+export type ConsentOverview = {
+    /**
+     * Purposes
+     */
+    purposes: Array<ConsentStatus>;
+    rights: RightsNotice;
+    /**
+     * Notice Version
+     */
+    notice_version: string;
+};
+
+/**
+ * ConsentPurpose
+ *
+ * Phase 1 purposes. Phase 2 adds ``linkedin_link``, ``outreach`` and ``llm_drafting``
+ * (with a migration widening ``consents_purpose_check``).
+ */
+export type ConsentPurpose = 'provider_runs' | 'pool_contribution';
+
+/**
+ * ConsentStatus
+ *
+ * One purpose: the text to show (plain-text paragraphs) and the Student's status on it.
+ *
+ * ``status``: ``granted`` (active on the current version), ``outdated`` (active on an older
+ * version: agree again), ``revoked`` (withdrawn) or ``none`` (never agreed).
+ */
+export type ConsentStatus = {
+    purpose: ConsentPurpose;
+    /**
+     * Title
+     */
+    title: string;
+    /**
+     * Body
+     */
+    body: Array<string>;
+    /**
+     * Version
+     */
+    version: string;
+    /**
+     * Status
+     */
+    status: 'granted' | 'revoked' | 'none' | 'outdated';
+    /**
+     * Granted At
+     */
+    granted_at: string | null;
+    /**
+     * Revoked At
+     */
+    revoked_at: string | null;
+};
+
+/**
+ * HTTPValidationError
+ */
+export type HttpValidationError = {
+    /**
+     * Detail
+     */
+    detail?: Array<ValidationError>;
+};
+
+/**
  * Health
  */
 export type Health = {
@@ -32,6 +113,50 @@ export type Me = {
      * Role
      */
     role: 'student' | 'admin';
+};
+
+/**
+ * RightsNotice
+ *
+ * The India DPDP Act rights notice, shown with the consent texts (plain text).
+ */
+export type RightsNotice = {
+    /**
+     * Title
+     */
+    title: string;
+    /**
+     * Body
+     */
+    body: Array<string>;
+};
+
+/**
+ * ValidationError
+ */
+export type ValidationError = {
+    /**
+     * Location
+     */
+    loc: Array<string | number>;
+    /**
+     * Message
+     */
+    msg: string;
+    /**
+     * Error Type
+     */
+    type: string;
+    /**
+     * Input
+     */
+    input?: unknown;
+    /**
+     * Context
+     */
+    ctx?: {
+        [key: string]: unknown;
+    };
 };
 
 export type GetHealthData = {
@@ -81,3 +206,77 @@ export type GetMeResponses = {
 };
 
 export type GetMeResponse = GetMeResponses[keyof GetMeResponses];
+
+export type ListConsentsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/consents';
+};
+
+export type ListConsentsResponses = {
+    /**
+     * Successful Response
+     */
+    200: ConsentOverview;
+};
+
+export type ListConsentsResponse = ListConsentsResponses[keyof ListConsentsResponses];
+
+export type RevokeConsentData = {
+    body?: never;
+    path: {
+        purpose: ConsentPurpose;
+    };
+    query?: never;
+    url: '/api/v1/consents/{purpose}';
+};
+
+export type RevokeConsentErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type RevokeConsentError = RevokeConsentErrors[keyof RevokeConsentErrors];
+
+export type RevokeConsentResponses = {
+    /**
+     * Successful Response
+     */
+    204: void;
+};
+
+export type RevokeConsentResponse = RevokeConsentResponses[keyof RevokeConsentResponses];
+
+export type GrantConsentData = {
+    body: ConsentGrant;
+    path: {
+        purpose: ConsentPurpose;
+    };
+    query?: never;
+    url: '/api/v1/consents/{purpose}';
+};
+
+export type GrantConsentErrors = {
+    /**
+     * The consent text version changed
+     */
+    409: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type GrantConsentError = GrantConsentErrors[keyof GrantConsentErrors];
+
+export type GrantConsentResponses = {
+    /**
+     * Successful Response
+     */
+    200: ConsentStatus;
+};
+
+export type GrantConsentResponse = GrantConsentResponses[keyof GrantConsentResponses];

@@ -132,7 +132,7 @@ Vault `drain_secret` and the GitHub secret, then clear `DRAIN_SECRET_PREVIOUS`.
 
 - **Sign-in** is Supabase Auth (email + password, or Google) in `web`, with an `@supabase/ssr`
   cookie session. `web/src/proxy.ts` refreshes the session cookie on every page request,
-  sends signed-out visitors of `/onboarding` to `/login` and signed-in visitors of
+  sends signed-out visitors of `/onboarding` and `/settings/*` to `/login` and signed-in visitors of
   `/login`/`/signup` to `/onboarding`. `web` uses Supabase **only** for Auth.
 - **Email confirmation is required.** After sign-up the user sees "Check your email". The link
   (template `supabase/templates/confirmation.html`) opens `/auth/confirm?token_hash=...`,
@@ -184,6 +184,33 @@ Supabase dashboard → Authentication:
 - **Render env:** `SUPABASE_URL=https://<project-ref>.supabase.co`, and `SUPABASE_JWT_SECRET`
   only while the project still signs with the legacy HS256 secret.
 - **Vercel env:** `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
+
+## Consent (AD-11, Story 1.4)
+
+- **Purposes (Phase 1):** `provider_runs` (runs under the Student's own Apify account, billed
+  to it; LinkedIn's terms restrict scraping) and `pool_contribution` (Listings collected under
+  the Student's key are shared with matching Students; without it they stay private). They are
+  independent and optional during onboarding.
+- **Records:** `app.consents` (owned by `accounts`): granting inserts a row with the text
+  `version`, revoking sets `revoked_at`; history is kept, and a partial unique index allows one
+  active row per owner and purpose. Rows cascade-delete with the account.
+- **The one gate:** `accounts.service.require_consent(session, owner_id, purpose)` passes only
+  with an active row on the purpose's **current** version; otherwise it raises
+  `ConsentRequiredError` (403 `/problems/consent-required` with `purpose`). Never add another
+  consent check or a consent flag elsewhere.
+- **Revocation** publishes `core.events.ConsentRevoked(owner_id, purpose)` in the same
+  transaction. Subscribers (`core.events.subscribe`) run before commit; if one raises, the
+  revocation rolls back.
+- **API:** `GET /api/v1/consents` (texts, status `granted|revoked|none|outdated`, DPDP rights
+  notice), `PUT /api/v1/consents/{purpose}` with `{"version": ...}` (409
+  `consent-version-mismatch` if the text changed), `DELETE /api/v1/consents/{purpose}` (204).
+  The web screens are `/onboarding` (step 1) and `/settings/consent`.
+- **Bumping a consent version:** edit the paragraphs in
+  `api/app/modules/accounts/consent_text.py` and set that purpose's `version` to the date of the
+  change (`YYYY-MM-DD`). Existing consents then show `outdated` and the gate blocks until the
+  Student agrees again; no migration is needed. For the rights notice, bump
+  `RIGHTS_NOTICE_VERSION`. A **new purpose** also needs a migration widening
+  `consents_purpose_check`. Run `npm run gen:api` only if the API shape changed.
 
 ## CI (`.github/workflows/ci.yml`)
 

@@ -77,10 +77,266 @@
           }
         ]
       }
+    },
+    "/api/v1/consents": {
+      "get": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "List Consents",
+        "operationId": "listConsents",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsentOverview"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "SupabaseAccessToken": []
+          }
+        ]
+      }
+    },
+    "/api/v1/consents/{purpose}": {
+      "put": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Grant Consent",
+        "operationId": "grantConsent",
+        "security": [
+          {
+            "SupabaseAccessToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "purpose",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ConsentPurpose"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsentGrant"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsentStatus"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The consent text version changed",
+            "content": {
+              "application/problem+json": {}
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Revoke Consent",
+        "operationId": "revokeConsent",
+        "security": [
+          {
+            "SupabaseAccessToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "purpose",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ConsentPurpose"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "ConsentGrant": {
+        "properties": {
+          "version": {
+            "type": "string",
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Version"
+          }
+        },
+        "type": "object",
+        "required": [
+          "version"
+        ],
+        "title": "ConsentGrant",
+        "description": "The version of the text the Student was shown and agreed to."
+      },
+      "ConsentOverview": {
+        "properties": {
+          "purposes": {
+            "items": {
+              "$ref": "#/components/schemas/ConsentStatus"
+            },
+            "type": "array",
+            "title": "Purposes"
+          },
+          "rights": {
+            "$ref": "#/components/schemas/RightsNotice"
+          },
+          "notice_version": {
+            "type": "string",
+            "title": "Notice Version"
+          }
+        },
+        "type": "object",
+        "required": [
+          "purposes",
+          "rights",
+          "notice_version"
+        ],
+        "title": "ConsentOverview"
+      },
+      "ConsentPurpose": {
+        "type": "string",
+        "enum": [
+          "provider_runs",
+          "pool_contribution"
+        ],
+        "title": "ConsentPurpose",
+        "description": "Phase 1 purposes. Phase 2 adds ``linkedin_link``, ``outreach`` and ``llm_drafting``\n(with a migration widening ``consents_purpose_check``)."
+      },
+      "ConsentStatus": {
+        "properties": {
+          "purpose": {
+            "$ref": "#/components/schemas/ConsentPurpose"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "body": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Body"
+          },
+          "version": {
+            "type": "string",
+            "title": "Version"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "granted",
+              "revoked",
+              "none",
+              "outdated"
+            ],
+            "title": "Status"
+          },
+          "granted_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Granted At"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "purpose",
+          "title",
+          "body",
+          "version",
+          "status",
+          "granted_at",
+          "revoked_at"
+        ],
+        "title": "ConsentStatus",
+        "description": "One purpose: the text to show (plain-text paragraphs) and the Student's status on it.\n\n``status``: ``granted`` (active on the current version), ``outdated`` (active on an older\nversion: agree again), ``revoked`` (withdrawn) or ``none`` (never agreed)."
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
       "Health": {
         "properties": {
           "status": {
@@ -123,6 +379,68 @@
         ],
         "title": "Me",
         "description": "The calling account. ``role`` comes from the database, never from the token."
+      },
+      "RightsNotice": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "body": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Body"
+          }
+        },
+        "type": "object",
+        "required": [
+          "title",
+          "body"
+        ],
+        "title": "RightsNotice",
+        "description": "The India DPDP Act rights notice, shown with the consent texts (plain text)."
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
       }
     },
     "securitySchemes": {

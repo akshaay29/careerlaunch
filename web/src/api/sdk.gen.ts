@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { GetAdminMeData, GetAdminMeResponses, GetHealthData, GetHealthResponses, GetMeData, GetMeResponses } from './types.gen';
+import type { GetAdminMeData, GetAdminMeResponses, GetHealthData, GetHealthResponses, GetMeData, GetMeResponses, GrantConsentData, GrantConsentErrors, GrantConsentResponses, ListConsentsData, ListConsentsResponses, RevokeConsentData, RevokeConsentErrors, RevokeConsentResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -39,4 +39,35 @@ export const getMe = <ThrowOnError extends boolean = false>(options?: Options<Ge
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/api/v1/me',
     ...options
+});
+
+/**
+ * List Consents
+ */
+export const listConsents = <ThrowOnError extends boolean = false>(options?: Options<ListConsentsData, ThrowOnError>): RequestResult<ListConsentsResponses, unknown, ThrowOnError> => (options?.client ?? client).get<ListConsentsResponses, unknown, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/v1/consents',
+    ...options
+});
+
+/**
+ * Revoke Consent
+ */
+export const revokeConsent = <ThrowOnError extends boolean = false>(options: Options<RevokeConsentData, ThrowOnError>): RequestResult<RevokeConsentResponses, RevokeConsentErrors, ThrowOnError> => (options.client ?? client).delete<RevokeConsentResponses, RevokeConsentErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/v1/consents/{purpose}',
+    ...options
+});
+
+/**
+ * Grant Consent
+ */
+export const grantConsent = <ThrowOnError extends boolean = false>(options: Options<GrantConsentData, ThrowOnError>): RequestResult<GrantConsentResponses, GrantConsentErrors, ThrowOnError> => (options.client ?? client).put<GrantConsentResponses, GrantConsentErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/v1/consents/{purpose}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
 });
