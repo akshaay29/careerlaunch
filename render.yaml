@@ -78,3 +78,16 @@ services:
         value: "0.001"
       - key: PLATFORM_MONTHLY_CAP_USD
         sync: false
+      # Expiry, eviction and the quota check (Story 2.5).
+      - key: LISTING_UNSEEN_DAYS
+        value: "14"
+      - key: LISTING_UNSEEN_RUNS
+        value: "3"
+      - key: LISTING_PURGE_GRACE_DAYS
+        value: "30"
+      - key: LISTING_POOL_CAP
+        value: "30000"
+      - key: DB_QUOTA_BYTES
+        value: "524288000"
+      - key: DB_QUOTA_ALERT_PERCENT
+        value: "80"

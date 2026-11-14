@@ -1,5 +1,5 @@
-"""listings.repo: SQL for the ``sources``, ``listings`` and ``provider_runs`` tables only
-(AD-2)."""
+"""listings.repo: SQL for the ``sources``, ``listings``, ``provider_runs`` and
+``listing_blocks`` tables only (AD-2)."""
 
 import uuid
 from dataclasses import dataclass
@@ -341,3 +341,240 @@ async def latest_runs(
         .execution_options(populate_existing=True)
     )
     return list((await session.execute(stmt)).scalars().all())
+
+
+# --------------------------------------------------------------------------- maintenance (2.5)
+#
+# Each batch statement locks its candidate rows with ``FOR UPDATE SKIP LOCKED`` (a row another
+# transaction holds, e.g. a ``pin``, is skipped, never waited for) and the DELETEs re-check
+# ``pin_count = 0``. Callers loop until a batch changes nothing.
+
+_EXPIRE_BATCH = text(
+    """
+    WITH threshold AS (
+        -- The Nth most recent succeeded linkedin run: a Listing last seen before it has
+        -- missed at least N runs. NULL while fewer than N runs have ever succeeded.
+        SELECT (SELECT r.finished_at FROM provider_runs r
+                WHERE r.status = 'succeeded' AND r.purpose = 'jobs'
+                  AND r.finished_at IS NOT NULL
+                ORDER BY r.finished_at DESC OFFSET :runs_before LIMIT 1) AS cutoff
+    ), due AS MATERIALIZED (
+        SELECT l.id FROM listings l, threshold
+        WHERE l.expired_at IS NULL
+          AND l.pin_count = 0
+          AND (l.deadline < CURRENT_DATE
+               OR (l.source = 'linkedin'
+                   AND l.last_seen_at < now() - make_interval(days => :days)
+                   AND threshold.cutoff IS NOT NULL
+                   -- The Nth most recent run must itself be recent: after a burst of runs
+                   -- and then silence nothing expires (an idle pool never empties itself).
+                   AND threshold.cutoff >= now() - make_interval(days => :days)
+                   AND l.last_seen_at < threshold.cutoff))
+        ORDER BY l.id
+        LIMIT :batch
+        FOR UPDATE OF l SKIP LOCKED
+    )
+    UPDATE listings SET expired_at = now()
+    FROM due WHERE listings.id = due.id
+    RETURNING (listings.deadline < CURRENT_DATE) AS by_deadline
+    """
+)
+
+# The candidates are a MATERIALIZED CTE: ``DELETE ... WHERE id IN (SELECT ... LIMIT n FOR
+# UPDATE SKIP LOCKED)`` may re-run its subquery per row and delete more than ``n``.
+_PURGE_BATCH = text(
+    """
+    WITH due AS MATERIALIZED (
+        SELECT id FROM listings
+        WHERE expired_at < now() - make_interval(days => :grace) AND pin_count = 0
+        ORDER BY expired_at, id
+        LIMIT :batch
+        FOR UPDATE SKIP LOCKED
+    )
+    DELETE FROM listings USING due
+    WHERE listings.id = due.id AND listings.pin_count = 0
+    RETURNING listings.id
+    """
+)
+
+_EVICT_BATCH = text(
+    """
+    WITH due AS MATERIALIZED (
+        SELECT id FROM listings
+        WHERE expired_at IS NULL AND pin_count = 0
+        ORDER BY relevance, last_seen_at, id
+        LIMIT :batch
+        FOR UPDATE SKIP LOCKED
+    )
+    DELETE FROM listings USING due
+    WHERE listings.id = due.id AND listings.pin_count = 0
+    RETURNING listings.id
+    """
+)
+
+
+async def expire_batch(
+    session: AsyncSession, *, unseen_days: int, unseen_runs: int, batch: int
+) -> tuple[int, int]:
+    """Mark up to ``batch`` due Listings expired; returns ``(by_deadline, by_unseen)``."""
+    rows = (
+        await session.execute(
+            _EXPIRE_BATCH,
+            {"runs_before": unseen_runs - 1, "days": unseen_days, "batch": batch},
+        )
+    ).all()
+    by_deadline = sum(1 for r in rows if r.by_deadline)
+    return by_deadline, len(rows) - by_deadline
+
+
+async def purge_batch(session: AsyncSession, *, grace_days: int, batch: int) -> int:
+    """Delete up to ``batch`` unpinned Listings expired longer than ``grace_days`` ago."""
+    result = await session.execute(_PURGE_BATCH, {"grace": grace_days, "batch": batch})
+    return len(result.all())
+
+
+async def count_active(session: AsyncSession) -> int:
+    """Listings that are not expired."""
+    stmt = select(func.count()).select_from(Listing).where(Listing.expired_at.is_(None))
+    return int((await session.execute(stmt)).scalar_one())
+
+
+async def evict_batch(session: AsyncSession, *, batch: int) -> int:
+    """Delete up to ``batch`` active, unpinned Listings: lowest relevance, then oldest
+    ``last_seen_at``."""
+    result = await session.execute(_EVICT_BATCH, {"batch": batch})
+    return len(result.all())
+
+
+async def database_size_bytes(session: AsyncSession) -> int:
+    row = await session.execute(text("SELECT pg_database_size(current_database())"))
+    return int(row.scalar_one())
+
+
+async def lock_listing(session: AsyncSession, listing_id: uuid.UUID) -> Listing | None:
+    """The Listing, row-locked until the transaction ends (None when it does not exist)."""
+    stmt = (
+        select(Listing)
+        .where(Listing.id == listing_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def set_pin_count(session: AsyncSession, listing_id: uuid.UUID, count: int) -> None:
+    """Set ``pin_count``; a pinned Listing is also no longer expired."""
+    values: dict[str, Any] = {"pin_count": count}
+    if count > 0:
+        values["expired_at"] = None
+    await session.execute(update(Listing).where(Listing.id == listing_id).values(**values))
+
+
+async def set_relevance(session: AsyncSession, listing_id: uuid.UUID, relevance: float) -> None:
+    await session.execute(
+        update(Listing).where(Listing.id == listing_id).values(relevance=relevance)
+    )
+
+
+# --------------------------------------------------------------------------- takedown (2.5)
+
+
+async def lock_blocks(
+    session: AsyncSession, *, exclusive: bool, timeout_ms: int | None = None
+) -> None:
+    """Order takedowns against ingestion until the transaction ends: ``block``/``unblock``
+    take it exclusively, every ingest shares it. An ingest that started before a block
+    committed is therefore finished (and its row visible to the block's delete) first, and
+    one that starts after sees the block."""
+    fn = "pg_advisory_xact_lock" if exclusive else "pg_advisory_xact_lock_shared"
+    if timeout_ms is None:
+        await session.execute(text(f"SELECT {fn}(hashtextextended('listing_blocks', 0))"))
+        return
+    # Wait at most ``timeout_ms`` (for this transaction), then put the old setting back.
+    previous = (await session.execute(text("SELECT current_setting('lock_timeout')"))).scalar_one()
+    await session.execute(
+        text("SELECT set_config('lock_timeout', :v, true)"), {"v": f"{int(timeout_ms)}ms"}
+    )
+    await session.execute(text(f"SELECT {fn}(hashtextextended('listing_blocks', 0))"))
+    await session.execute(text("SELECT set_config('lock_timeout', :v, true)"), {"v": previous})
+
+
+async def is_blocked(
+    session: AsyncSession, *, source: str, source_job_id: str, url: str, company: str
+) -> bool:
+    """Whether a block matches the draft: by Listing, by canonical URL or by company (all
+    already normalised by the caller)."""
+    row = await session.execute(
+        text(
+            """
+            SELECT EXISTS (
+                SELECT 1 FROM listing_blocks
+                WHERE (kind = 'listing' AND source = :source AND value = :job_id)
+                   OR (kind = 'url' AND value = :url)
+                   OR (kind = 'company' AND value = :company)
+            )
+            """
+        ),
+        {"source": source, "job_id": source_job_id, "url": url, "company": company},
+    )
+    return bool(row.scalar_one())
+
+
+async def insert_block(session: AsyncSession, kind: str, source: str | None, value: str) -> bool:
+    """Record a block; False when the same one already exists."""
+    row = await session.execute(
+        text(
+            """
+            INSERT INTO listing_blocks (id, kind, source, value)
+            VALUES (:id, :kind, :source, :value)
+            ON CONFLICT ON CONSTRAINT listing_blocks_kind_source_value_key DO NOTHING
+            RETURNING id
+            """
+        ),
+        {"id": uuid.uuid7(), "kind": kind, "source": source, "value": value},
+    )
+    return row.first() is not None
+
+
+async def delete_block(session: AsyncSession, kind: str, source: str | None, value: str) -> bool:
+    """Remove a block; False when there was none."""
+    row = await session.execute(
+        text(
+            """
+            DELETE FROM listing_blocks
+            WHERE kind = :kind AND source IS NOT DISTINCT FROM :source AND value = :value
+            RETURNING id
+            """
+        ),
+        {"kind": kind, "source": source, "value": value},
+    )
+    return row.first() is not None
+
+
+async def listing_ids_by_source_job(
+    session: AsyncSession, source: str, source_job_id: str
+) -> list[uuid.UUID]:
+    stmt = select(Listing.id).where(
+        Listing.source == source, Listing.source_job_id == source_job_id
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def listing_ids_and_urls(session: AsyncSession) -> list[tuple[uuid.UUID, str]]:
+    return [(r.id, r.url) for r in (await session.execute(select(Listing.id, Listing.url))).all()]
+
+
+async def listing_ids_and_companies(session: AsyncSession) -> list[tuple[uuid.UUID, str]]:
+    stmt = select(Listing.id, Listing.company).where(Listing.company != "")
+    return [(r.id, r.company) for r in (await session.execute(stmt)).all()]
+
+
+async def delete_listings(session: AsyncSession, ids: list[uuid.UUID]) -> int:
+    """Delete these Listings (pinned ones too: a takedown wins); returns how many existed."""
+    if not ids:
+        return 0
+    result = await session.execute(
+        text("DELETE FROM listings WHERE id = ANY(CAST(:ids AS uuid[])) RETURNING id"),
+        {"ids": ids},
+    )
+    return len(result.all())

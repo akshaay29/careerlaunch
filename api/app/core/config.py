@@ -101,6 +101,16 @@ class Settings(BaseSettings):
     apify_price_per_item_usd: float = Field(default=0.001, gt=0, le=1)
     # Optional platform-wide monthly cap over every Student's committed spend; unset = off.
     platform_monthly_cap_usd: float | None = Field(default=None, gt=0)
+    # Expiry, eviction and the quota check (Story 2.5). A Listing not seen for this many days
+    # AND this many succeeded provider runs since is marked expired; an expired Listing is
+    # deleted after the grace period. Active Listings above the pool cap are evicted.
+    listing_unseen_days: int = Field(default=14, ge=7)
+    listing_unseen_runs: int = Field(default=3, ge=1)
+    listing_purge_grace_days: int = Field(default=30, ge=1)
+    listing_pool_cap: int = Field(default=30000, ge=1)
+    # The free database quota and the percentage of it that raises ``listings.quota_alert``.
+    db_quota_bytes: int = Field(default=500 * 1024 * 1024, ge=1)
+    db_quota_alert_percent: int = Field(default=80, ge=1, le=100)
     # The owner's Apify token, used ONLY by scripts/seed_pool.py.
     seed_apify_token: SecretStr | None = None
 

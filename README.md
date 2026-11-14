@@ -62,6 +62,7 @@ npm run dev
 | `uv run python scripts/check_exposed_schema.py` | AD-1 check: nothing in `public`/`graphql_public`, RLS on, no grants to `anon`/`authenticated` |
 | `uv run python scripts/drain_local.py` | Run one job drain locally (`--every 300` to loop every 5 minutes, like pg_cron) |
 | `uv run python scripts/promote_admin.py <email>` | Make an existing account an admin (audited; see "Auth and roles") |
+| `uv run python scripts/block_listing.py block\|unblock --listing SOURCE:ID \| --url URL \| --company NAME` | Owner takedown of a Listing, URL or company (audited; local/ci only unless `--yes-prod`; see "Expiry, eviction and takedown") |
 | `uv run python scripts/seed_demo_listings.py` | Put ~30 fake demo Listings in the shared pool (local/ci only; idempotent; see "Listings") |
 | `uv run alembic revision -m "..."` | New migration. Call `migrations.helpers.create_app_table_rls(table)` for every new table. |
 
@@ -462,6 +463,47 @@ Supabase dashboard → Authentication:
   starts one run through the same spend path as the System (`owner_id` NULL,
   `run_key` `seed:<uuid>`, every Listing goes to the pool), polls it from the script and
   prints the counts and the cost.
+
+## Expiry, eviction and takedown (FR-8, NFR-7, AD-7, Story 2.5)
+
+Four global daily jobs (`schedules` rows from migration `0015_listing_maintenance`, staggered
+by 5 minutes from about 03:00 UTC) keep the shared pool fresh and inside the free database.
+Each is idempotent, batched, writes a counts-only `ops_events` row and is retried by the jobs
+layer if it raises.
+
+| Job | What it does |
+| --- | --- |
+| `listings.expire` | Marks a Listing expired (`expired_at = now()`; browse and detail hide it) when its `deadline` is before today, or when it is a `linkedin` Listing last seen more than `LISTING_UNSEEN_DAYS` (14, at least 7) days ago **and** at least `LISTING_UNSEEN_RUNS` (3) succeeded provider runs have finished since. With too few completed runs nothing expires by unseen, so an idle pool never empties itself. `manual` Listings never expire by unseen. |
+| `listings.purge` | Deletes Listings expired longer than `LISTING_PURGE_GRACE_DAYS` (30) ago. Never a pinned Listing (`pin_count > 0`). |
+| `listings.evict` | When active (not expired) Listings exceed `LISTING_POOL_CAP` (30000), deletes the excess: lowest `relevance`, then oldest `last_seen_at`. Only unpinned rows, taken with `FOR UPDATE SKIP LOCKED`; a pinned Listing is never removed, even when the cap cannot be reached. |
+| `listings.quota_check` | Reads `pg_database_size`; at or above `DB_QUOTA_ALERT_PERCENT` (80) percent of `DB_QUOTA_BYTES` (500 MiB) it records a `listings.quota_alert` ops event (`used_mb`, `quota_mb`, `percent`) and logs a warning. Watch `ops_events` for it. |
+
+Every foreign key into `app.listings` must be `ON DELETE CASCADE` or `SET NULL` (a convention
+test, `test_listing_fk_convention.py`, fails otherwise), because these jobs and takedowns
+delete Listings.
+
+**Hooks for later epics** (`listings.service`; they take a session and never commit):
+`pin(session, listing_id)` (also clears `expired_at`), `unpin` (never below 0) and
+`set_relevance(session, listing_id, relevance)` (finite, 0..100). Each locks the row, so it is
+safe against eviction and purge; an unknown id raises `NotFoundError`.
+
+**Takedown (owner CLI only; there is no public API or UI).** From `api/`:
+
+```bash
+uv run python scripts/block_listing.py block   --listing linkedin:3692563201
+uv run python scripts/block_listing.py block   --url "https://www.linkedin.com/jobs/view/1?trk=x"
+uv run python scripts/block_listing.py block   --company "Acme Corp"
+uv run python scripts/block_listing.py unblock --company "Acme Corp"
+```
+
+`block` records the takedown in `listing_blocks`, deletes every matching Listing now (pinned
+ones too: a takedown wins) and writes an `admin_audit` row (`listings.block`, `actor_id` NULL
+= the CLI) and a counts-only ops event. A URL matches on its canonical form (lower-cased host,
+no query, fragment or trailing slash); a company on its trimmed, case-folded name. A matching
+draft is then never ingested again: it counts as `rejected`, is not an error and is not stored.
+`unblock` lifts it (audited as `listings.unblock`; deleted Listings are not restored; exit
+code 1 when there was no such takedown). The script runs only with `ENVIRONMENT` local or ci
+unless you pass `--yes-prod`.
 
 ## CI (`.github/workflows/ci.yml`)
 

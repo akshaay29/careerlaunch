@@ -13,17 +13,24 @@ Takes the session; never commits (routers and tasks commit).
   (``accounts.service.pause_provider``). :func:`provider_usage` is the Student's usage view.
 * Browsing returns only Listings visible to the actor (pool, or private to them) that are
   not expired.
+* Story 2.5: the daily jobs (:func:`expire_listings`, :func:`purge_listings`,
+  :func:`evict_listings`, :func:`check_quota`), the hooks later epics use (:func:`pin`,
+  :func:`unpin`, :func:`set_relevance`) and the owner's takedown (:func:`block`,
+  :func:`unblock`; a blocked draft is never ingested).
 """
 
 import base64
 import binascii
 import logging
+import math
+import re
 import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
+from urllib.parse import urlsplit
 
 from pydantic import SecretStr
 from sqlalchemy.exc import DBAPIError
@@ -42,7 +49,7 @@ from app.core.errors import (
 )
 from app.core.events import ListingsIngested, ProviderKeyChanged
 from app.core.jobs import enqueue, upsert_owner_schedule
-from app.core.ops import record_event
+from app.core.ops import record_audit, record_event
 from app.modules.accounts import service as accounts_service
 from app.modules.accounts.consent_text import ConsentPurpose
 from app.modules.listings import repo
@@ -58,6 +65,7 @@ from app.ports.provider_runner import (
     get_provider_runner,
 )
 from app.ports.source_adapter import (
+    SOURCE_ID_PATTERN,
     ListingDraft,
     SourceAdapter,
     SourceQuery,
@@ -78,6 +86,37 @@ class ListingIngestError(Exception):
     is dropped so it can never reach a log."""
 
 
+class ListingBlockedError(Exception):
+    """The draft matches a takedown (``listing_blocks``): it is never stored. Internal to the
+    ingest functions, which turn it into a skipped (rejected) draft."""
+
+
+DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def canonical_url(url: str) -> str:
+    """The form a URL takedown matches on: lower-cased scheme and host, the port unless it is
+    the scheme's default, no userinfo, query or fragment, and no trailing slash on the path.
+    ``ValueError`` when the URL cannot be parsed."""
+    parts = urlsplit(url.strip())
+    host = parts.hostname or ""
+    if ":" in host:
+        host = f"[{host}]"
+    scheme = parts.scheme.lower()
+    try:
+        number = parts.port
+    except ValueError:  # an out-of-range port: keep what was written
+        number = None
+    # The scheme's default port is the same URL without it.
+    port = f":{number}" if number and number != DEFAULT_PORTS.get(scheme) else ""
+    return f"{scheme}://{host}{port}{parts.path.rstrip('/')}"
+
+
+def normalize_company(company: str) -> str:
+    """The form a company takedown matches on: trimmed and case-folded."""
+    return company.strip().casefold()
+
+
 def _visible_to_collector(result: repo.UpsertResult, collected_by: uuid.UUID | None) -> bool:
     return result.visibility_owner_id is None or result.visibility_owner_id == collected_by
 
@@ -95,6 +134,17 @@ async def _upsert(
         core_skills.normalize(f"{draft.title}\n{draft.description}")
     )
     try:
+        # Shared with every ingest, exclusive for block/unblock: a takedown committed before
+        # this point is seen by the check, one still running finishes after this upsert.
+        await repo.lock_blocks(session, exclusive=False)
+        if await repo.is_blocked(
+            session,
+            source=draft.source,
+            source_job_id=draft.source_job_id,
+            url=canonical_url(draft.url),
+            company=normalize_company(draft.company_raw),
+        ):
+            raise ListingBlockedError
         return await repo.upsert_listing(
             session,
             source=draft.source,
@@ -127,8 +177,9 @@ async def ingest_draft(
     collected_by: uuid.UUID | None,
     contributes_to_pool: bool,
     publish: bool = True,
-) -> tuple[uuid.UUID, bool]:
-    """Store ``draft`` as a Listing in one upsert; returns ``(listing_id, created)``.
+) -> tuple[uuid.UUID, bool] | None:
+    """Store ``draft`` as a Listing in one upsert; returns ``(listing_id, created)``, or None
+    when the draft matches a takedown (``block``): it is not stored and that is not an error.
 
     ``collected_by`` is the collecting Student (None = System, e.g. the seed).
     ``contributes_to_pool`` is the caller's ``pool_contribution`` consent result: True puts a
@@ -143,9 +194,12 @@ async def ingest_draft(
     The description is passed to Postgres only as a bind parameter and is never stored or
     logged.
     """
-    result = await _upsert(
-        session, draft, collected_by=collected_by, contributes_to_pool=contributes_to_pool
-    )
+    try:
+        result = await _upsert(
+            session, draft, collected_by=collected_by, contributes_to_pool=contributes_to_pool
+        )
+    except ListingBlockedError:
+        return None
     if publish and _visible_to_collector(result, collected_by):
         await core_events.publish(
             session,
@@ -177,9 +231,10 @@ async def ingest_drafts(
 
     The collector's ``pool_contribution`` consent is read once (the System always
     contributes). Each draft is stored in its own savepoint: a draft the database refuses is
-    skipped and counted as ``rejected``. Rows not visible to the collector (another Student's
-    private Listing) are left out of the count and the event. When there was at least one
-    draft, one ``listings.ingested`` ops event (counts only) is written and, when anything
+    skipped and counted as ``rejected``, and so is a draft that matches a takedown (``block``;
+    it is not an error and is not logged as one). Rows not visible to the collector (another
+    Student's private Listing) are left out of the count and the event. When there was at
+    least one draft, one ``listings.ingested`` ops event (counts only) is written and, when anything
     visible was ingested, one ``ListingsIngested``.
     """
     contributes = (
@@ -198,6 +253,8 @@ async def ingest_drafts(
                 result = await _upsert(
                     session, draft, collected_by=collected_by, contributes_to_pool=contributes
                 )
+        except ListingBlockedError:
+            rejected += 1
         except ListingIngestError as exc:
             rejected += 1
             # Ids and the driver error class only; never draft text.
@@ -1009,6 +1066,269 @@ async def provider_usage(session: AsyncSession, owner_id: uuid.UUID) -> Provider
         month=await repo.month_spend(session, month_start(now), owner_id),
         runs=await repo.latest_runs(session, owner_id, USAGE_RUNS),
     )
+
+
+# --------------------------------------------------------------------------- maintenance (2.5)
+
+MAINTENANCE_BATCH = 500
+EXPIRED_EVENT = "listings.expired"
+PURGED_EVENT = "listings.purged"
+EVICTED_EVENT = "listings.evicted"
+QUOTA_ALERT_EVENT = "listings.quota_alert"
+BLOCKED_EVENT = "listings.blocked"
+UNBLOCKED_EVENT = "listings.unblocked"
+BLOCK_ACTION = "listings.block"
+UNBLOCK_ACTION = "listings.unblock"
+MIB = 1024 * 1024
+
+BLOCK_KINDS = ("listing", "url", "company")
+MAX_BLOCK_VALUE_CHARS = 2048  # the listing_blocks.value CHECK
+# How long block/unblock wait for ingests in flight before giving up (they hold up every
+# ingest queued behind them while they wait).
+BLOCK_LOCK_TIMEOUT_MS = 30_000
+MAX_RELEVANCE = 100.0
+
+
+async def _batches(step: Any) -> int:
+    """Run ``step(session) -> int`` in its own committed transaction until it changes
+    nothing; returns the total."""
+    total = 0
+    while True:
+        async with get_sessionmaker()() as session:
+            changed = await step(session)
+            await session.commit()
+        if changed == 0:
+            return total
+        total += changed
+
+
+async def _record(kind: str, counts: dict[str, int]) -> None:
+    async with get_sessionmaker()() as session:
+        await record_event(session, kind, counts=counts)
+        await session.commit()
+
+
+async def expire_listings(*, batch: int = MAINTENANCE_BATCH) -> int:
+    """The daily ``listings.expire`` job. Marks active Listings expired when their deadline
+    is before today, or when ``linkedin`` ones were last seen more than ``LISTING_UNSEEN_DAYS``
+    days ago and at least ``LISTING_UNSEEN_RUNS`` provider runs have succeeded since (without
+    enough runs an idle pool never empties itself). Idempotent; counts only in the
+    ``listings.expired`` event. Returns the number expired."""
+    settings = get_settings()
+    by_deadline = by_unseen = 0
+
+    async def step(session: AsyncSession) -> int:
+        nonlocal by_deadline, by_unseen
+        deadline, unseen = await repo.expire_batch(
+            session,
+            unseen_days=settings.listing_unseen_days,
+            unseen_runs=settings.listing_unseen_runs,
+            batch=batch,
+        )
+        by_deadline += deadline
+        by_unseen += unseen
+        return deadline + unseen
+
+    await _batches(step)
+    await _record(EXPIRED_EVENT, {"deadline": by_deadline, "unseen": by_unseen})
+    return by_deadline + by_unseen
+
+
+async def purge_listings(*, batch: int = MAINTENANCE_BATCH) -> int:
+    """The daily ``listings.purge`` job: deletes Listings expired longer than
+    ``LISTING_PURGE_GRACE_DAYS`` ago, never a pinned one. Returns the number deleted."""
+    grace = get_settings().listing_purge_grace_days
+
+    async def step(session: AsyncSession) -> int:
+        return await repo.purge_batch(session, grace_days=grace, batch=batch)
+
+    purged = await _batches(step)
+    await _record(PURGED_EVENT, {"purged": purged})
+    return purged
+
+
+async def evict_listings(*, batch: int = MAINTENANCE_BATCH) -> int:
+    """The daily ``listings.evict`` job: when active Listings exceed ``LISTING_POOL_CAP``,
+    deletes the excess (lowest relevance, then oldest ``last_seen_at``), never a pinned
+    Listing, even when the cap cannot be reached. Returns the number deleted."""
+    cap = get_settings().listing_pool_cap
+    async with get_sessionmaker()() as session:
+        active = await repo.count_active(session)
+    excess = active - cap
+    removed = 0
+    while removed < excess:
+        async with get_sessionmaker()() as session:
+            changed = await repo.evict_batch(session, batch=min(batch, excess - removed))
+            await session.commit()
+        if changed == 0:
+            break  # only pinned or locked rows are left
+        removed += changed
+    await _record(EVICTED_EVENT, {"removed": removed, "active": active, "cap": cap})
+    return removed
+
+
+async def check_quota() -> bool:
+    """The daily ``listings.quota_check`` job: at or above ``DB_QUOTA_ALERT_PERCENT`` percent
+    of ``DB_QUOTA_BYTES`` records ``listings.quota_alert`` (counts: ``used_mb``, ``quota_mb``,
+    ``percent``) and logs a warning. Returns whether it alerted."""
+    settings = get_settings()
+    async with get_sessionmaker()() as session:
+        used = await repo.database_size_bytes(session)
+    quota = settings.db_quota_bytes
+    if used * 100 < settings.db_quota_alert_percent * quota:
+        return False
+    counts = {"used_mb": used // MIB, "quota_mb": quota // MIB, "percent": used * 100 // quota}
+    logger.warning("listing_quota_alert", extra=counts)
+    await _record(QUOTA_ALERT_EVENT, counts)
+    return True
+
+
+# ---- hooks for later epics (they take the session and never commit)
+
+
+async def _locked(session: AsyncSession, listing_id: uuid.UUID) -> Listing:
+    listing = await repo.lock_listing(session, listing_id)
+    if listing is None:
+        raise NotFoundError(NOT_FOUND_DETAIL)
+    return listing
+
+
+async def pin(session: AsyncSession, listing_id: uuid.UUID) -> int:
+    """Protect a Listing from purge and eviction (a tracker holds it). Also clears
+    ``expired_at``, so it stays visible. Returns the new ``pin_count``; an unknown id raises
+    :class:`NotFoundError`."""
+    listing = await _locked(session, listing_id)
+    count = listing.pin_count + 1
+    await repo.set_pin_count(session, listing_id, count)
+    return count
+
+
+async def unpin(session: AsyncSession, listing_id: uuid.UUID) -> int:
+    """Release one pin (never below 0); returns the new ``pin_count``."""
+    listing = await _locked(session, listing_id)
+    count = max(listing.pin_count - 1, 0)
+    await repo.set_pin_count(session, listing_id, count)
+    return count
+
+
+async def set_relevance(session: AsyncSession, listing_id: uuid.UUID, relevance: float) -> None:
+    """Rank a Listing for eviction (higher survives longer). ``relevance`` must be finite and
+    within 0..100 (``ValueError``)."""
+    if isinstance(relevance, bool) or not isinstance(relevance, int | float):
+        raise ValueError("relevance must be a number")
+    try:
+        valid = math.isfinite(relevance) and 0 <= relevance <= MAX_RELEVANCE
+    except OverflowError:  # an int too large for a float
+        valid = False
+    if not valid:
+        raise ValueError("relevance must be finite and within 0..100")
+    await _locked(session, listing_id)
+    await repo.set_relevance(session, listing_id, float(relevance))
+
+
+# ---- takedown
+
+
+def _block_target(kind: str, value: str) -> tuple[str | None, str]:
+    """``(source, normalised value)`` of a takedown; ``ValueError`` for bad input.
+    ``listing`` takes ``SOURCE:SOURCE_JOB_ID``."""
+    if kind not in BLOCK_KINDS:
+        raise ValueError(f"kind must be one of {', '.join(BLOCK_KINDS)}")
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("value must not be empty")
+    if kind == "listing":
+        source, _, job_id = value.partition(":")
+        source, job_id = source.strip(), job_id.strip()
+        if not re.fullmatch(SOURCE_ID_PATTERN, source) or not job_id:
+            raise ValueError("a listing takedown looks like SOURCE:SOURCE_JOB_ID")
+        if len(job_id) > MAX_BLOCK_VALUE_CHARS:
+            raise ValueError(f"the listing is longer than {MAX_BLOCK_VALUE_CHARS} characters")
+        return source, job_id
+    if kind == "url":
+        parts = urlsplit(value.strip())
+        if parts.scheme.lower() not in ("http", "https") or not parts.hostname:
+            raise ValueError("a url takedown needs an absolute http(s) URL")
+        normalised = canonical_url(value)
+    else:
+        normalised = normalize_company(value)
+    if len(normalised) > MAX_BLOCK_VALUE_CHARS:
+        raise ValueError(f"the {kind} is longer than {MAX_BLOCK_VALUE_CHARS} characters")
+    return None, normalised
+
+
+def _same_url(stored: str, canonical: str) -> bool:
+    """Whether a stored URL has this canonical form; one that cannot be parsed never does."""
+    try:
+        return canonical_url(stored) == canonical
+    except ValueError:
+        return False
+
+
+async def _blocked_listing_ids(
+    session: AsyncSession, kind: str, source: str | None, value: str
+) -> list[uuid.UUID]:
+    if kind == "listing":
+        assert source is not None
+        return await repo.listing_ids_by_source_job(session, source, value)
+    if kind == "url":
+        return [
+            i
+            for i, url in await repo.listing_ids_and_urls(session)
+            if _same_url(url, value)
+        ]
+    return [
+        i
+        for i, company in await repo.listing_ids_and_companies(session)
+        if normalize_company(company) == value
+    ]
+
+
+class TakedownBusyError(ValueError):
+    """A takedown could not get its lock in time: an ingest is in flight. Nothing was
+    changed; the session must be rolled back. Retry."""
+
+
+async def _lock_for_takedown(session: AsyncSession) -> None:
+    try:
+        await repo.lock_blocks(session, exclusive=True, timeout_ms=BLOCK_LOCK_TIMEOUT_MS)
+    except DBAPIError as exc:
+        if getattr(exc.orig, "sqlstate", None) == "55P03":  # lock_not_available
+            raise TakedownBusyError("an ingest is in flight; nothing changed, retry") from None
+        raise
+
+
+async def block(
+    session: AsyncSession, kind: str, value: str, *, actor_id: uuid.UUID | None = None
+) -> int:
+    """Take down a Listing (``SOURCE:ID``), a URL or a company: records the block (so a
+    matching draft is never ingested again), deletes every matching Listing now (pinned ones
+    too: a takedown wins) and writes an ``admin_audit`` row (``listings.block``; ``actor_id``
+    None is the CLI) and a counts-only ``listings.blocked`` event. Blocking twice is safe.
+    Returns the number of Listings deleted. Does not commit."""
+    source, normalised = _block_target(kind, value)
+    await _lock_for_takedown(session)
+    created = await repo.insert_block(session, kind, source, normalised)
+    removed = await repo.delete_listings(
+        session, await _blocked_listing_ids(session, kind, source, normalised)
+    )
+    await record_audit(session, BLOCK_ACTION, actor_id=actor_id, target_account_id=None)
+    await record_event(session, BLOCKED_EVENT, counts={"removed": removed, "created": int(created)})
+    return removed
+
+
+async def unblock(
+    session: AsyncSession, kind: str, value: str, *, actor_id: uuid.UUID | None = None
+) -> bool:
+    """Lift a takedown (later ingests succeed again; deleted Listings are not restored).
+    Writes an ``admin_audit`` row (``listings.unblock``) when there was one; an unknown
+    block is a no-op returning False. Does not commit."""
+    source, normalised = _block_target(kind, value)
+    await _lock_for_takedown(session)
+    if not await repo.delete_block(session, kind, source, normalised):
+        return False
+    await record_audit(session, UNBLOCK_ACTION, actor_id=actor_id, target_account_id=None)
+    await record_event(session, UNBLOCKED_EVENT, counts={"unblocked": 1})
+    return True
 
 
 # --------------------------------------------------------------------------- scheduling
