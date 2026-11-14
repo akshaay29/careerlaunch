@@ -1,4 +1,7 @@
-"""Operational log (AD-18): ``ops_events`` is append-only and holds ids and integer counts only.
+"""Operational log and admin audit (AD-18).
+
+``ops_events`` is append-only and holds ids and integer counts only; ``admin_audit`` is
+insert-only.
 
 Every module writes through :func:`record_event`. It inserts on the caller's session and never
 commits; the caller's unit of work decides. Never pass personal data, bodies or secrets: the
@@ -79,3 +82,42 @@ async def record_event(
         },
     )
     return event_id
+
+
+# --------------------------------------------------------------------------- admin audit
+
+_INSERT_AUDIT = text(
+    """
+    INSERT INTO admin_audit (id, actor_id, action, target_account_id)
+    VALUES (:id, :actor_id, :action, :target_account_id)
+    """
+)
+
+
+async def record_audit(
+    session: AsyncSession,
+    action: str,
+    *,
+    actor_id: uuid.UUID | None,
+    target_account_id: uuid.UUID | None,
+) -> uuid.UUID:
+    """Insert one ``admin_audit`` row on ``session`` (no commit). Returns the new id.
+
+    ``admin_audit`` is insert-only (AD-18): a trigger rejects DELETE and every UPDATE except
+    ``ON DELETE SET NULL`` on the account references. ``actor_id=None`` means the system (e.g.
+    the ``promote-admin`` CLI). ``action`` is a machine name such as ``account.promote_admin``.
+    """
+    _check_name("action", action)
+    _check_id("actor_id", actor_id)
+    _check_id("target_account_id", target_account_id)
+    audit_id = uuid.uuid7()
+    await session.execute(
+        _INSERT_AUDIT,
+        {
+            "id": audit_id,
+            "actor_id": actor_id,
+            "action": action,
+            "target_account_id": target_account_id,
+        },
+    )
+    return audit_id

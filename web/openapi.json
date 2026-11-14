@@ -5,7 +5,7 @@
     "version": "0.1.0"
   },
   "paths": {
-    "/api/v1/health": {
+    "/api/v1/public/health": {
       "get": {
         "tags": [
           "system"
@@ -25,6 +25,58 @@
           }
         }
       }
+    },
+    "/api/v1/admin/me": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Get Admin Me",
+        "operationId": "getAdminMe",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "SupabaseAccessToken": []
+          }
+        ]
+      }
+    },
+    "/api/v1/me": {
+      "get": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Get Me",
+        "operationId": "getMe",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "SupabaseAccessToken": []
+          }
+        ]
+      }
     }
   },
   "components": {
@@ -42,6 +94,42 @@
           "status"
         ],
         "title": "Health"
+      },
+      "Me": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "email": {
+            "type": "string",
+            "title": "Email"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "student",
+              "admin"
+            ],
+            "title": "Role"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "email",
+          "role"
+        ],
+        "title": "Me",
+        "description": "The calling account. ``role`` comes from the database, never from the token."
+      }
+    },
+    "securitySchemes": {
+      "SupabaseAccessToken": {
+        "type": "http",
+        "description": "Supabase Auth access token: `Authorization: Bearer <access_token>`.",
+        "scheme": "bearer"
       }
     }
   }

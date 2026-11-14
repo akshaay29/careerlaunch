@@ -20,6 +20,7 @@ from app.core.jobs import (
     scheduler_tick,
     task,
 )
+from tests.conftest import AccountFactory
 
 pytestmark = pytest.mark.usefixtures("clean_jobs")
 
@@ -474,8 +475,8 @@ async def _add_schedule(
     return sid
 
 
-async def test_scheduler_tick_enqueues_due_and_advances() -> None:
-    owner = uuid.uuid4()
+async def test_scheduler_tick_enqueues_due_and_advances(accounts: AccountFactory) -> None:
+    owner = accounts.create()
     sid = await _add_schedule(owner=owner, due=True)
     before = await _scalar("SELECT next_run_at FROM schedules WHERE id = :id", id=sid)
 
@@ -493,8 +494,8 @@ async def test_scheduler_tick_enqueues_due_and_advances() -> None:
     assert await scheduler_tick() == 0
 
 
-async def test_paused_schedule_not_enqueued() -> None:
-    await _add_schedule(owner=uuid.uuid4(), due=True, paused=True)
+async def test_paused_schedule_not_enqueued(accounts: AccountFactory) -> None:
+    await _add_schedule(owner=accounts.create(), due=True, paused=True)
     await _add_schedule(owner=None, due=False)
     assert await scheduler_tick() == 0
     assert await _scalar("SELECT count(*) FROM job_outbox") == 0
@@ -509,9 +510,9 @@ async def test_drain_runs_due_schedules() -> None:
     assert key.startswith(f"tests.scheduled:schedule:{sid}:")
 
 
-async def test_invalid_schedule_is_paused_valid_one_still_runs() -> None:
+async def test_invalid_schedule_is_paused_valid_one_still_runs(accounts: AccountFactory) -> None:
     bad = await _add_schedule(owner=None, due=True, kind="tests.no_such_task")
-    good = await _add_schedule(owner=uuid.uuid4(), due=True)
+    good = await _add_schedule(owner=accounts.create(), due=True)
 
     result = await drain()
 

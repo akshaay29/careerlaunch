@@ -15,10 +15,18 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.orm import DeclarativeBase
 
 from app.core.config import get_settings
 
 APP_SCHEMA = "app"
+
+
+
+class Base(DeclarativeBase):
+    """Declarative base for module models. Tables resolve through ``search_path=app``;
+    Alembic migrations (not ``metadata.create_all``) own the DDL (AD-13)."""
+
 
 _engine: AsyncEngine | None = None
 _sessionmaker: async_sessionmaker[AsyncSession] | None = None

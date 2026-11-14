@@ -66,6 +66,14 @@ class ConflictError(DomainError):
     title = "Conflict"
 
 
+class AuthUnavailableError(DomainError):
+    """The signing keys could not be fetched, so no token can be verified right now."""
+
+    status = 503
+    slug = "auth-unavailable"
+    title = "Authentication unavailable"
+
+
 _STATUS_SLUGS: dict[int, str] = {
     400: "bad-request",
     401: "unauthorized",

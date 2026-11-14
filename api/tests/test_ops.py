@@ -8,12 +8,13 @@ from sqlalchemy.exc import DBAPIError
 
 from app.core.db import get_sessionmaker
 from app.core.ops import record_event
+from tests.conftest import AccountFactory
 
 pytestmark = pytest.mark.usefixtures("clean_jobs")
 
 
-async def test_record_event_inserts_on_caller_session() -> None:
-    owner, entity = uuid.uuid4(), uuid.uuid4()
+async def test_record_event_inserts_on_caller_session(accounts: AccountFactory) -> None:
+    owner, entity = accounts.create(), uuid.uuid4()
     async with get_sessionmaker()() as session:
         event_id = await record_event(
             session,

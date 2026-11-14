@@ -11,7 +11,7 @@ services:
     autoDeployTrigger: "off"
     buildCommand: pip install uv==0.13.1 && uv sync --frozen --no-dev
     startCommand: .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips='*'
-    healthCheckPath: /api/v1/health
+    healthCheckPath: /api/v1/public/health
     envVars:
       - key: PYTHON_VERSION
         value: "3.14.8"
@@ -36,3 +36,9 @@ services:
         value: "240"
       - key: DRAIN_STALE_AFTER_MINUTES
         value: "15"
+      # Supabase Auth (AD-5): token issuer / JWKS base, and the legacy HS256 secret (if the
+      # project still signs with it).
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_JWT_SECRET
+        sync: false

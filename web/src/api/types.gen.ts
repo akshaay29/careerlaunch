@@ -14,11 +14,31 @@ export type Health = {
     status: 'ok';
 };
 
+/**
+ * Me
+ *
+ * The calling account. ``role`` comes from the database, never from the token.
+ */
+export type Me = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Email
+     */
+    email: string;
+    /**
+     * Role
+     */
+    role: 'student' | 'admin';
+};
+
 export type GetHealthData = {
     body?: never;
     path?: never;
     query?: never;
-    url: '/api/v1/health';
+    url: '/api/v1/public/health';
 };
 
 export type GetHealthResponses = {
@@ -29,3 +49,35 @@ export type GetHealthResponses = {
 };
 
 export type GetHealthResponse = GetHealthResponses[keyof GetHealthResponses];
+
+export type GetAdminMeData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/admin/me';
+};
+
+export type GetAdminMeResponses = {
+    /**
+     * Successful Response
+     */
+    200: Me;
+};
+
+export type GetAdminMeResponse = GetAdminMeResponses[keyof GetAdminMeResponses];
+
+export type GetMeData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/me';
+};
+
+export type GetMeResponses = {
+    /**
+     * Successful Response
+     */
+    200: Me;
+};
+
+export type GetMeResponse = GetMeResponses[keyof GetMeResponses];
