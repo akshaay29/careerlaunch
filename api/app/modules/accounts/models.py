@@ -1,10 +1,10 @@
-"""accounts.models: ``accounts`` (DDL in migration 0004_accounts), ``consents`` (0005) and
-``deleted_accounts`` (0010)."""
+"""accounts.models: ``accounts`` (DDL in migration 0004_accounts), ``consents`` (0005),
+``deleted_accounts`` (0010) and ``provider_credentials`` (0012)."""
 
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Text, func
+from sqlalchemy import CHAR, DateTime, ForeignKey, LargeBinary, SmallInteger, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -67,3 +67,32 @@ class DeletedAccount(Base):
     auth_deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+
+class ProviderCredential(Base):
+    """A Student's Provider Key (DDL in migration 0012_provider_credentials).
+
+    ``ciphertext`` is ``core.crypto`` output with AAD ``provider_credentials:<id>:<owner_id>``;
+    the plaintext token is never stored. ``last4`` is the only plaintext fragment kept. The
+    ``__repr__`` never shows the ciphertext.
+    """
+
+    __tablename__ = "provider_credentials"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid7)
+    owner_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("accounts.id", ondelete="CASCADE"))
+    provider: Mapped[str] = mapped_column(Text)
+    ciphertext: Mapped[bytes] = mapped_column(LargeBinary)
+    key_version: Mapped[int] = mapped_column(SmallInteger)
+    last4: Mapped[str] = mapped_column(CHAR(4))
+    provider_user_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    validated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    def __repr__(self) -> str:
+        return f"ProviderCredential(id={self.id!s}, provider={self.provider!r})"

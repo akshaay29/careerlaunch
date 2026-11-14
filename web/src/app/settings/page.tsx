@@ -7,6 +7,7 @@ import { LISTINGS_PATH, ONBOARDING_PATH } from "@/lib/auth-paths";
 import { SETTINGS_CONSENT_PATH } from "@/lib/consent";
 import { SETTINGS_DOCUMENTS_PATH } from "@/lib/documents";
 import { SETTINGS_PREFERENCES_PATH } from "@/lib/preferences";
+import { SETTINGS_PROVIDER_KEY_PATH } from "@/lib/provider-key";
 import { SETTINGS_RESUMES_PATH } from "@/lib/resumes";
 import { SETTINGS_SKILLS_PATH } from "@/lib/skill-profile";
 
@@ -22,6 +23,11 @@ const PAGES = [
     href: SETTINGS_CONSENT_PATH,
     title: "Consent",
     description: "Agree to or withdraw consent for provider runs and the shared pool.",
+  },
+  {
+    href: SETTINGS_PROVIDER_KEY_PATH,
+    title: "Provider Key",
+    description: "Add, replace or delete the Apify token used to collect fresh Listings.",
   },
   {
     href: SETTINGS_RESUMES_PATH,

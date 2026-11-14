@@ -1,5 +1,5 @@
-"""accounts.service: provisioning, admin promotion (AD-5), consent (AD-11) and account
-deletion (FR-2, AD-17).
+"""accounts.service: provisioning, admin promotion (AD-5), consent (AD-11), account
+deletion (FR-2, AD-17) and Provider Keys (FR-28, AD-6).
 
 Takes the session; never commits.
 """
@@ -9,24 +9,35 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Literal, cast
 
+from pydantic import SecretStr
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import crypto
 from app.core.auth import Actor, Role
+from app.core.config import get_settings
 from app.core.errors import (
     ConflictError,
     ConsentRequiredError,
     ConsentVersionMismatchError,
     InvalidInputError,
     NotFoundError,
+    ProviderKeyUnreadableError,
+    ProviderUnavailableError,
     UnauthorizedError,
 )
-from app.core.events import AccountDeleting, ConsentRevoked, publish
-from app.core.jobs import PRIORITY_QUEUE, enqueue
+from app.core.events import AccountDeleting, ConsentRevoked, ProviderKeyChanged, publish
+from app.core.jobs import PRIORITY_QUEUE, enqueue, pause_owner_schedules
 from app.core.ops import record_audit, record_event
-from app.modules.accounts import consent_text, repo, tasks
+from app.modules.accounts import COLLECTION_SCHEDULE_KINDS, consent_text, repo, tasks
 from app.modules.accounts.consent_text import ConsentPurpose, ConsentText
-from app.modules.accounts.models import Account, Consent
+from app.modules.accounts.models import Account, Consent, ProviderCredential
+from app.ports.provider_runner import (
+    ProviderAccount,
+    ProviderKeyInvalid,
+    ProviderRunner,
+    ProviderUnavailable,
+)
 
 PROMOTE_ADMIN_ACTION = "account.promote_admin"
 EMAIL_UNIQUE_CONSTRAINT = "accounts_email_key"
@@ -254,3 +265,140 @@ async def resume_pending_deletions(session: AsyncSession) -> int:
             await _enqueue_purge(session, tasks.DELETE_AUTH_USER, tombstone.id)
             enqueued += 1
     return enqueued
+
+
+# --------------------------------------------------------------------------- provider keys (AD-6)
+
+APIFY = "apify"
+CREDENTIALS_TABLE = "provider_credentials"
+INVALID_PROVIDER_KEY = (
+    "Apify didn't accept this token. Check that you copied it fully and that it hasn't expired."
+)
+
+
+@dataclass(frozen=True)
+class CredentialMeta:
+    """What may leave the api about a Provider Key: never the token or the ciphertext."""
+
+    provider: str
+    has_key: bool
+    last4: str | None
+    validated_at: datetime | None
+    # The stored key was sealed with a master-key version that is no longer configured: it
+    # cannot be used and the Student must enter it again.
+    needs_reentry: bool = False
+
+
+def _needs_reentry(key_version: int) -> bool:
+    configured = get_settings().master_keys
+    # With no master key at all, the fault is the server's (503), not the Student's key.
+    return bool(configured) and key_version not in configured
+
+
+def _meta(provider: str, row: ProviderCredential) -> CredentialMeta:
+    return CredentialMeta(
+        provider, True, row.last4.strip(), row.validated_at, _needs_reentry(row.key_version)
+    )
+
+
+def _aad(credential_id: uuid.UUID, owner_id: uuid.UUID) -> str:
+    return crypto.credential_aad(CREDENTIALS_TABLE, credential_id, owner_id)
+
+
+def ensure_credentials_available() -> None:
+    """Raise ``CredentialsUnavailableError`` (503) when no master key is configured, so a
+    save fails before the provider is called."""
+    crypto.current_key_version()
+
+
+async def validate_provider_key(runner: ProviderRunner, token: SecretStr) -> ProviderAccount:
+    """Check ``token`` with the provider. Takes no session: callers run it with NO database
+    transaction open. A rejected token is a 422 on ``token``; an unreachable provider a 503."""
+    try:
+        return await runner.validate_token(token)
+    except ProviderKeyInvalid:
+        raise InvalidInputError(["body", "token"], INVALID_PROVIDER_KEY) from None
+    except ProviderUnavailable:
+        raise ProviderUnavailableError() from None
+
+
+async def get_credential_meta(
+    session: AsyncSession, owner_id: uuid.UUID, provider: str = APIFY
+) -> CredentialMeta:
+    row = await repo.get_credential(session, owner_id, provider)
+    if row is None:
+        return CredentialMeta(provider, False, None, None)
+    return _meta(provider, row)
+
+
+async def store_credential(
+    session: AsyncSession,
+    owner_id: uuid.UUID,
+    token: SecretStr,
+    provider_user_id: str | None,
+    provider: str = APIFY,
+) -> CredentialMeta:
+    """Encrypt and store ``token`` as the owner's key for ``provider``, replacing any existing
+    one in place (same row id), and publish ``ProviderKeyChanged(removed=False)``. The token
+    must already be validated (outside any transaction). ``provider_runs`` consent is checked
+    again under the account lock (it may have been revoked while the provider was called).
+    Never commits."""
+    if not await repo.lock_for_consent_change(session, owner_id):
+        raise NotFoundError("No account has this id.")
+    await require_consent(session, owner_id, ConsentPurpose.PROVIDER_RUNS)
+    plaintext = token.get_secret_value()
+    existing = await repo.get_credential(session, owner_id, provider)
+    credential_id = existing.id if existing is not None else uuid.uuid7()
+    blob = crypto.encrypt(plaintext, _aad(credential_id, owner_id))
+    row = await repo.upsert_credential(
+        session,
+        credential_id=credential_id,
+        owner_id=owner_id,
+        provider=provider,
+        ciphertext=blob,
+        key_version=crypto.blob_key_version(blob),
+        last4=plaintext[-4:],
+        provider_user_id=provider_user_id[:100] if provider_user_id else None,
+    )
+    await publish(session, ProviderKeyChanged(owner_id=owner_id, removed=False))
+    return _meta(provider, row)
+
+
+async def delete_credential(
+    session: AsyncSession, owner_id: uuid.UUID, provider: str = APIFY
+) -> bool:
+    """Delete the owner's key for ``provider`` and pause the owner's collection schedules
+    (even with no key, so a leftover schedule never runs keyless), in the caller's unit of
+    work. Publishes ``ProviderKeyChanged(removed=True)`` only when a key was deleted, and
+    returns whether one was. Never commits."""
+    if not await repo.lock_for_consent_change(session, owner_id):
+        return False
+    deleted = await repo.delete_credential(session, owner_id, provider) is not None
+    await pause_owner_schedules(session, owner_id, COLLECTION_SCHEDULE_KINDS)
+    if deleted:
+        await publish(session, ProviderKeyChanged(owner_id=owner_id, removed=True))
+    return deleted
+
+
+async def on_consent_revoked(session: AsyncSession, event: ConsentRevoked) -> None:
+    """``ConsentRevoked`` subscriber (AD-11): withdrawing ``provider_runs`` pauses the owner's
+    collection schedules in the revoking transaction. The Provider Key is kept."""
+    if event.purpose == ConsentPurpose.PROVIDER_RUNS.value:
+        await pause_owner_schedules(session, event.owner_id, COLLECTION_SCHEDULE_KINDS)
+
+
+async def decrypt_credential(
+    session: AsyncSession, owner_id: uuid.UUID, provider: str = APIFY
+) -> SecretStr | None:
+    """The owner's token for ``provider`` (None without a key), for the callers of adapters
+    only (Story 2.3's ``start_provider_run``). Never log, return or store the result.
+    Raises ``CredentialsUnavailableError`` (503) without a master key and
+    ``ProviderKeyUnreadableError`` (409: re-enter the key) when the stored blob does not
+    decrypt."""
+    row = await repo.get_credential(session, owner_id, provider)
+    if row is None:
+        return None
+    try:
+        return SecretStr(crypto.decrypt(row.ciphertext, _aad(row.id, owner_id)))
+    except crypto.CredentialError:
+        raise ProviderKeyUnreadableError() from None
