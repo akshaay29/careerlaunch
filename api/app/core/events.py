@@ -80,6 +80,16 @@ class ListingsIngested(Event):
     collected_by: uuid.UUID | None
 
 
+@dataclass(frozen=True)
+class ProviderKeyChanged(Event):
+    """The owner's Provider Key was saved or replaced (``removed`` False) or deleted
+    (``removed`` True) (FR-28). Collection (Story 2.3) reacts: a first run on save; the
+    owner's collection schedules are already paused by ``accounts`` on delete."""
+
+    owner_id: uuid.UUID
+    removed: bool
+
+
 Handler = Callable[[AsyncSession, Any], Awaitable[None]]
 
 _subscribers: dict[type[Event], list[Handler]] = {}

@@ -52,3 +52,9 @@ services:
         value: "10"
       - key: DOCUMENT_MAX_COUNT
         value: "20"
+      # Provider Key encryption (AD-6): master key(s), set in the dashboard; an offline copy
+      # lives in the owner's password manager. Apify integration header value.
+      - key: CREDENTIALS_MASTER_KEYS
+        sync: false
+      - key: APIFY_INTEGRATION_PLATFORM
+        value: careerlaunch

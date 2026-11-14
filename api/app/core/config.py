@@ -1,5 +1,6 @@
 """The one pydantic-settings class. Every key is listed in the repo-root .env.example."""
 
+import base64
 import ipaddress
 from functools import lru_cache
 from pathlib import Path
@@ -60,12 +61,23 @@ class Settings(BaseSettings):
     # Documents a Student may keep (FR-26); one more upload is a 409.
     document_max_count: int = Field(default=20, ge=1, le=100)
 
+    # Provider Key encryption (AD-6, core.crypto): "1:<base64 of 32 bytes>[,2:<...>]".
+    # Encryption uses the highest version; decryption the version in the blob. Unset: storing
+    # or decrypting a credential fails with 503 credentials-unavailable (startup is unaffected).
+    credentials_master_keys: SecretStr | None = None
+    # Apify (ProviderRunner adapter, AD-12). Sent as x-apify-integration-platform.
+    apify_integration_platform: str = Field(
+        default="careerlaunch", pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+    )
+    apify_api_base: str = "https://api.apify.com"
+
     @field_validator(
         "migration_database_url",
         "drain_secret",
         "drain_secret_previous",
         "supabase_jwt_secret",
         "supabase_service_role_key",
+        "credentials_master_keys",
         mode="before",
     )
     @classmethod
@@ -77,10 +89,30 @@ class Settings(BaseSettings):
     def _upper(cls, v: object) -> object:
         return v.upper() if isinstance(v, str) else v
 
-    @field_validator("supabase_url", mode="after")
+    @field_validator("supabase_url", "apify_api_base", mode="after")
     @classmethod
     def _strip_slash(cls, v: str) -> str:
         return v.strip().rstrip("/")
+
+    @model_validator(mode="after")
+    def _master_keys_format(self) -> Self:
+        # A model-level check: a field-level error would echo the raw value (the key) in the
+        # ValidationError's input_value; here the input is the model, whose repr masks it.
+        if self.credentials_master_keys is not None:
+            parse_master_keys(self.credentials_master_keys.get_secret_value())
+        return self
+
+    @model_validator(mode="after")
+    def _apify_base_is_https(self) -> Self:
+        # The token travels as a bearer header: never in cleartext outside local / CI.
+        parts = urlsplit(self.apify_api_base)
+        allowed = ("https",) if self.environment not in ("local", "ci") else ("https", "http")
+        if parts.scheme not in allowed or not parts.hostname:
+            raise ValueError(
+                "APIFY_API_BASE must be an https:// URL (http:// only when ENVIRONMENT is "
+                "local or ci)"
+            )
+        return self
 
     @model_validator(mode="after")
     def _prod_needs_real_supabase(self) -> Self:
@@ -102,6 +134,13 @@ class Settings(BaseSettings):
         return f"{self.supabase_url}/storage/v1"
 
     @property
+    def master_keys(self) -> dict[int, bytes]:
+        """``{version: 32-byte key}``; empty when CREDENTIALS_MASTER_KEYS is unset."""
+        if self.credentials_master_keys is None:
+            return {}
+        return parse_master_keys(self.credentials_master_keys.get_secret_value())
+
+    @property
     def cors_origins(self) -> list[str]:
         raw = [self.web_origin, *self.cors_extra_origins.split(",")]
         seen: list[str] = []
@@ -119,6 +158,40 @@ class Settings(BaseSettings):
     def migration_sqlalchemy_url(self) -> str:
         secret = self.migration_database_url or self.database_url
         return to_sqlalchemy_url(secret.get_secret_value())
+
+
+MAX_KEY_VERSION = 32767  # provider_credentials.key_version is a smallint
+
+
+def parse_master_keys(raw: str) -> dict[int, bytes]:
+    """Parse ``"1:<base64-32-bytes>[,2:<...>]"`` into ``{version: key}``.
+
+    Raises ``ValueError`` naming only the problem (never the key material)."""
+    keys: dict[int, bytes] = {}
+    for part in (p.strip() for p in raw.split(",")):
+        if not part:
+            continue
+        version_text, sep, encoded = part.partition(":")
+        version_text = version_text.strip()
+        if not sep or not (version_text.isascii() and version_text.isdecimal()):
+            raise ValueError("CREDENTIALS_MASTER_KEYS entries must look like '<version>:<base64>'")
+        version = int(version_text)
+        if not 1 <= version <= MAX_KEY_VERSION:
+            raise ValueError(f"CREDENTIALS_MASTER_KEYS versions must be 1..{MAX_KEY_VERSION}")
+        if version in keys:
+            raise ValueError(f"CREDENTIALS_MASTER_KEYS has version {version} twice")
+        try:
+            key = base64.b64decode(encoded.strip(), validate=True)
+        except ValueError:  # binascii.Error is a ValueError
+            raise ValueError(
+                f"CREDENTIALS_MASTER_KEYS version {version} is not valid base64"
+            ) from None
+        if len(key) != 32:
+            raise ValueError(f"CREDENTIALS_MASTER_KEYS version {version} must decode to 32 bytes")
+        keys[version] = key
+    if not keys:
+        raise ValueError("CREDENTIALS_MASTER_KEYS has no keys")
+    return keys
 
 
 def _is_loopback(url: str) -> bool:

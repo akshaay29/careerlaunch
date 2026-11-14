@@ -2,7 +2,7 @@
 
 import { type Client, type ClientMeta, formDataBodySerializer, type Options as Options2, type RequestResult, type TDataShape } from './client';
 import { client } from './client.gen';
-import type { ActivateResumeData, ActivateResumeErrors, ActivateResumeResponses, DeleteDocumentData, DeleteDocumentErrors, DeleteDocumentResponses, DeleteMeData, DeleteMeErrors, DeleteMeResponses, DeleteResumeData, DeleteResumeErrors, DeleteResumeResponses, EditSkillProfileData, EditSkillProfileErrors, EditSkillProfileResponses, GetAdminMeData, GetAdminMeResponses, GetDocumentDownloadData, GetDocumentDownloadErrors, GetDocumentDownloadResponses, GetHealthData, GetHealthResponses, GetListingData, GetListingErrors, GetListingResponses, GetMeData, GetMeResponses, GetPreferencesData, GetPreferencesResponses, GetResumeDownloadData, GetResumeDownloadErrors, GetResumeDownloadResponses, GetSkillProfileData, GetSkillProfileResponses, GrantConsentData, GrantConsentErrors, GrantConsentResponses, ListConsentsData, ListConsentsResponses, ListDegreesData, ListDegreesResponses, ListDocumentsData, ListDocumentsErrors, ListDocumentsResponses, ListListingsData, ListListingsErrors, ListListingsResponses, ListResumesData, ListResumesErrors, ListResumesResponses, ResetSkillProfileData, ResetSkillProfileResponses, RevokeConsentData, RevokeConsentErrors, RevokeConsentResponses, SavePreferencesData, SavePreferencesErrors, SavePreferencesResponses, SuggestSkillsData, SuggestSkillsErrors, SuggestSkillsResponses, UploadDocumentData, UploadDocumentErrors, UploadDocumentResponses, UploadResumeData, UploadResumeErrors, UploadResumeResponses } from './types.gen';
+import type { ActivateResumeData, ActivateResumeErrors, ActivateResumeResponses, DeleteDocumentData, DeleteDocumentErrors, DeleteDocumentResponses, DeleteMeData, DeleteMeErrors, DeleteMeResponses, DeleteProviderKeyData, DeleteProviderKeyResponses, DeleteResumeData, DeleteResumeErrors, DeleteResumeResponses, EditSkillProfileData, EditSkillProfileErrors, EditSkillProfileResponses, GetAdminMeData, GetAdminMeResponses, GetDocumentDownloadData, GetDocumentDownloadErrors, GetDocumentDownloadResponses, GetHealthData, GetHealthResponses, GetListingData, GetListingErrors, GetListingResponses, GetMeData, GetMeResponses, GetPreferencesData, GetPreferencesResponses, GetProviderKeyData, GetProviderKeyResponses, GetResumeDownloadData, GetResumeDownloadErrors, GetResumeDownloadResponses, GetSkillProfileData, GetSkillProfileResponses, GrantConsentData, GrantConsentErrors, GrantConsentResponses, ListConsentsData, ListConsentsResponses, ListDegreesData, ListDegreesResponses, ListDocumentsData, ListDocumentsErrors, ListDocumentsResponses, ListListingsData, ListListingsErrors, ListListingsResponses, ListResumesData, ListResumesErrors, ListResumesResponses, PutProviderKeyData, PutProviderKeyErrors, PutProviderKeyResponses, ResetSkillProfileData, ResetSkillProfileResponses, RevokeConsentData, RevokeConsentErrors, RevokeConsentResponses, SavePreferencesData, SavePreferencesErrors, SavePreferencesResponses, SuggestSkillsData, SuggestSkillsErrors, SuggestSkillsResponses, UploadDocumentData, UploadDocumentErrors, UploadDocumentResponses, UploadResumeData, UploadResumeErrors, UploadResumeResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -81,6 +81,42 @@ export const revokeConsent = <ThrowOnError extends boolean = false>(options: Opt
 export const grantConsent = <ThrowOnError extends boolean = false>(options: Options<GrantConsentData, ThrowOnError>): RequestResult<GrantConsentResponses, GrantConsentErrors, ThrowOnError> => (options.client ?? client).put<GrantConsentResponses, GrantConsentErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/api/v1/consents/{purpose}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Delete Provider Key
+ *
+ * Delete my Provider Key and pause my collection. Idempotent.
+ */
+export const deleteProviderKey = <ThrowOnError extends boolean = false>(options?: Options<DeleteProviderKeyData, ThrowOnError>): RequestResult<DeleteProviderKeyResponses, unknown, ThrowOnError> => (options?.client ?? client).delete<DeleteProviderKeyResponses, unknown, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/v1/provider-key',
+    ...options
+});
+
+/**
+ * Get Provider Key
+ */
+export const getProviderKey = <ThrowOnError extends boolean = false>(options?: Options<GetProviderKeyData, ThrowOnError>): RequestResult<GetProviderKeyResponses, unknown, ThrowOnError> => (options?.client ?? client).get<GetProviderKeyResponses, unknown, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/v1/provider-key',
+    ...options
+});
+
+/**
+ * Put Provider Key
+ *
+ * Validate the Apify token with Apify, then store it encrypted (replacing any existing
+ * key). The token is never returned. Apify is called with no database transaction open.
+ */
+export const putProviderKey = <ThrowOnError extends boolean = false>(options: Options<PutProviderKeyData, ThrowOnError>): RequestResult<PutProviderKeyResponses, PutProviderKeyErrors, ThrowOnError> => (options.client ?? client).put<PutProviderKeyResponses, PutProviderKeyErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/v1/provider-key',
     ...options,
     headers: {
         'Content-Type': 'application/json',

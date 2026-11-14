@@ -455,6 +455,49 @@ export type ProfileSkill = {
 };
 
 /**
+ * ProviderKeyInput
+ *
+ * A Provider Key to validate and store. Trimmed, then 8 to 200 printable ASCII
+ * characters with no whitespace. Write-only: it is never returned, logged or echoed in a
+ * validation error.
+ */
+export type ProviderKeyInput = {
+    /**
+     * Token
+     */
+    token: string;
+};
+
+/**
+ * ProviderKeyMeta
+ *
+ * What the Student sees about their Provider Key: whether one is stored, its last four
+ * characters and when it was last validated. Never the token.
+ */
+export type ProviderKeyMeta = {
+    /**
+     * Provider
+     */
+    provider: 'apify';
+    /**
+     * Has Key
+     */
+    has_key: boolean;
+    /**
+     * Last4
+     */
+    last4: string | null;
+    /**
+     * Validated At
+     */
+    validated_at: string | null;
+    /**
+     * Needs Reentry
+     */
+    needs_reentry: boolean;
+};
+
+/**
  * ResumeDownload
  *
  * A signed URL that downloads the file as an attachment; it stops working at
@@ -793,6 +836,69 @@ export type GrantConsentResponses = {
 };
 
 export type GrantConsentResponse = GrantConsentResponses[keyof GrantConsentResponses];
+
+export type DeleteProviderKeyData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/provider-key';
+};
+
+export type DeleteProviderKeyResponses = {
+    /**
+     * Successful Response
+     */
+    204: void;
+};
+
+export type DeleteProviderKeyResponse = DeleteProviderKeyResponses[keyof DeleteProviderKeyResponses];
+
+export type GetProviderKeyData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/provider-key';
+};
+
+export type GetProviderKeyResponses = {
+    /**
+     * Successful Response
+     */
+    200: ProviderKeyMeta;
+};
+
+export type GetProviderKeyResponse = GetProviderKeyResponses[keyof GetProviderKeyResponses];
+
+export type PutProviderKeyData = {
+    body: ProviderKeyInput;
+    path?: never;
+    query?: never;
+    url: '/api/v1/provider-key';
+};
+
+export type PutProviderKeyErrors = {
+    /**
+     * provider_runs consent is required
+     */
+    403: unknown;
+    /**
+     * Apify did not accept the token
+     */
+    422: unknown;
+    /**
+     * Apify or credential storage is unavailable
+     */
+    503: unknown;
+};
+
+export type PutProviderKeyResponses = {
+    /**
+     * Successful Response
+     */
+    200: ProviderKeyMeta;
+};
+
+export type PutProviderKeyResponse = PutProviderKeyResponses[keyof PutProviderKeyResponses];
 
 export type ListResumesData = {
     body?: never;

@@ -363,6 +363,22 @@ _ADVANCE = text(
 
 
 _PAUSE = text("UPDATE schedules SET paused = true WHERE id = ANY(:ids)")
+_PAUSE_OWNER = text(
+    "UPDATE schedules SET paused = true "
+    "WHERE owner_id = :owner_id AND kind = ANY(:kinds) AND NOT paused"
+)
+
+
+async def pause_owner_schedules(
+    session: AsyncSession, owner_id: uuid.UUID, kinds: Iterable[str]
+) -> int:
+    """Pause ``owner_id``'s ``schedules`` rows of the given kinds, on the caller's session
+    (never commits). Takes effect by the next ``scheduler_tick``. Returns rows paused."""
+    kinds = list(kinds)
+    if not kinds:
+        return 0
+    result = await session.execute(_PAUSE_OWNER, {"owner_id": owner_id, "kinds": kinds})
+    return int(getattr(result, "rowcount", 0) or 0)
 
 
 async def scheduler_tick() -> int:

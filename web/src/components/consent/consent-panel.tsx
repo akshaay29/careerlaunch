@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import {
@@ -24,7 +25,13 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { LOGIN_PATH } from "@/lib/auth-paths";
-import { canAgree, canWithdraw, consentStatusLabel } from "@/lib/consent";
+import {
+  canAgree,
+  canWithdraw,
+  type ConsentReturn,
+  consentStatusLabel,
+  shouldReturnAfterGrant,
+} from "@/lib/consent";
 
 type Load =
   | { kind: "loading" }
@@ -50,9 +57,17 @@ function formatTime(iso: string | null): string | null {
 /**
  * The consent texts, the Student's status on each, and the DPDP rights notice.
  * Used by /onboarding (agree only) and /settings/consent (agree and withdraw).
- * All text is rendered as plain text.
+ * All text is rendered as plain text. With `returnTo` (an already validated local path and
+ * purpose), granting THAT purpose navigates to the path.
  */
-export function ConsentPanel({ allowWithdraw = false }: { allowWithdraw?: boolean }) {
+export function ConsentPanel({
+  allowWithdraw = false,
+  returnTo = null,
+}: {
+  allowWithdraw?: boolean;
+  returnTo?: ConsentReturn | null;
+}) {
+  const router = useRouter();
   const [load, setLoad] = useState<Load>({ kind: "loading" });
   const [busy, setBusy] = useState<ConsentPurpose | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -70,6 +85,7 @@ export function ConsentPanel({ allowWithdraw = false }: { allowWithdraw?: boolea
   }, []);
 
   async function agree(item: ConsentStatus) {
+    if (busy !== null) return;
     setBusy(item.purpose);
     setMessage(null);
     try {
@@ -78,6 +94,10 @@ export function ConsentPanel({ allowWithdraw = false }: { allowWithdraw?: boolea
         body: { version: item.version },
       });
       if (data) {
+        if (returnTo && shouldReturnAfterGrant(returnTo, data)) {
+          router.push(returnTo.path);
+          return;
+        }
         setLoad((prev) =>
           prev.kind === "ok"
             ? {
@@ -108,6 +128,7 @@ export function ConsentPanel({ allowWithdraw = false }: { allowWithdraw?: boolea
   }
 
   async function withdraw(item: ConsentStatus) {
+    if (busy !== null) return;
     setBusy(item.purpose);
     setMessage(null);
     try {

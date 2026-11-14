@@ -133,6 +133,44 @@ class AuthUnavailableError(DomainError):
     title = "Authentication unavailable"
 
 
+class CredentialsUnavailableError(DomainError):
+    """No credential master key is configured, so a credential cannot be stored or read."""
+
+    status = 503
+    slug = "credentials-unavailable"
+    title = "Credentials unavailable"
+
+    def __init__(self, detail: str | None = None) -> None:
+        super().__init__(
+            detail or "Saving provider keys is temporarily unavailable. Try again later."
+        )
+
+
+class ProviderKeyUnreadableError(DomainError):
+    """The stored Provider Key can no longer be decrypted (its master-key version was removed,
+    or the row was altered). The Student has to enter the key again."""
+
+    status = 409
+    slug = "provider-key-unreadable"
+    title = "Provider key unreadable"
+
+    def __init__(self, detail: str | None = None) -> None:
+        super().__init__(
+            detail or "Your saved Apify token can no longer be read. Re-enter your key."
+        )
+
+
+class ProviderUnavailableError(DomainError):
+    """The external provider (e.g. Apify) could not be reached or is failing right now."""
+
+    status = 503
+    slug = "provider-unavailable"
+    title = "Provider unavailable"
+
+    def __init__(self, detail: str | None = None) -> None:
+        super().__init__(detail or "Apify could not be reached. Try again in a few minutes.")
+
+
 _STATUS_SLUGS: dict[int, str] = {
     400: "bad-request",
     401: "unauthorized",
