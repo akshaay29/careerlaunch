@@ -58,3 +58,6 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-9-delete-my-account-and-all-my-data.md`
   summary: Add component tests for `DeleteAccount` (204 redirect, 422 on the field, 401 path, disabled while pending) once `web` has a harness.
   evidence: Only the helpers in `lib/account-deletion.ts` are tested.
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-1-shared-listing-pool-source-adapter-and-browsing.md`
+  summary: Add component tests for `ListingBrowser` / `ListingDetail` (signed-out, not-found, load-more merge, error retry) once `web` has a harness.
+  evidence: Only `lib/listings.ts` helpers are tested.

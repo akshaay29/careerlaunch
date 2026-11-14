@@ -181,9 +181,18 @@ async def require_consent(
     ``/problems/consent-required`` with ``purpose``). Callers run it when they enqueue work and
     again inside the job. An unknown purpose is a programming error (``ValueError``).
     """
+    if not await has_consent(session, owner_id, purpose):
+        raise ConsentRequiredError(consent_text.current_text(purpose).purpose.value)
+
+
+async def has_consent(
+    session: AsyncSession, owner_id: uuid.UUID, purpose: ConsentPurpose | str
+) -> bool:
+    """The same rule as :func:`require_consent`, without raising: True only when
+    ``owner_id`` has an active consent on the purpose's current version. For callers whose
+    behaviour (not permission) depends on consent, e.g. pool contribution."""
     text = consent_text.current_text(purpose)
-    if not await repo.has_active_consent(session, owner_id, text.purpose.value, text.version):
-        raise ConsentRequiredError(text.purpose.value)
+    return await repo.has_active_consent(session, owner_id, text.purpose.value, text.version)
 
 
 # --------------------------------------------------------------------------- deletion (AD-17)

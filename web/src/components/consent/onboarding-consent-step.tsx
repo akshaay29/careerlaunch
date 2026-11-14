@@ -7,7 +7,7 @@ import { PreferencesEditor } from "@/components/preferences/preferences-editor";
 import { ResumeManager } from "@/components/resumes/resume-manager";
 import { SkillProfileEditor } from "@/components/skills/skill-profile-editor";
 import { Button } from "@/components/ui/button";
-import { SETTINGS_PATH } from "@/lib/auth-paths";
+import { LISTINGS_PATH, SETTINGS_PATH } from "@/lib/auth-paths";
 import { SETTINGS_CONSENT_PATH } from "@/lib/consent";
 import { SETTINGS_PREFERENCES_PATH } from "@/lib/preferences";
 import { SETTINGS_RESUMES_PATH } from "@/lib/resumes";
@@ -36,8 +36,15 @@ export function OnboardingConsentStep() {
             matching is available.
           </p>
         </div>
-        <section className="rounded-lg border border-dashed p-5 text-sm text-muted-foreground">
-          No jobs to show yet.
+        <section className="flex flex-col gap-2 rounded-lg border p-5 text-sm">
+          <p>Browse jobs and internships from the shared pool while your feed is on its way.</p>
+          <div>
+            <Button asChild>
+              <Link href={LISTINGS_PATH} data-testid="onboarding-browse-listings">
+                Browse Listings
+              </Link>
+            </Button>
+          </div>
         </section>
         <p className="text-sm text-muted-foreground">
           Adding your own Apify Provider Key comes later, and it is optional.
