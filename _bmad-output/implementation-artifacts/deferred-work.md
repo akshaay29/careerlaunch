@@ -83,3 +83,13 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-2-4-see-my-usage-set-spend-caps-and-pause-on-failure.md`
   summary: Emit an ops event when a Student is paused or changes caps, notify them in-app or by email, and add accessibility attributes and component tests to the caps form.
   evidence: Only the failed run row records a pause today; the caps form ignores the `field` that `precheckCaps` returns; web has no component test harness.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-5-expire-evict-and-take-down-listings.md`
+  summary: Keep a durable record of what each takedown covered (kind and value, including after `unblock`), e.g. an audit detail column or a block history table.
+  evidence: `admin_audit` records only the action name and actors; `unblock` deletes the `listing_blocks` row, so nothing shows what was lifted.
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-5-expire-evict-and-take-down-listings.md`
+  summary: Add a `--dry-run` preview to `block_listing.py`, an index for the expire scan, an alert when one expire pass removes an unusually large share of the pool, and daily quota alerts with an escalation level and a way to reach the owner.
+  evidence: The CLI deletes irreversibly and prints only a count; the expire query has no supporting index; the quota alert is an `ops_events` row nobody is notified about.
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-5-expire-evict-and-take-down-listings.md`
+  summary: Clear `expired_at` on a re-sighting by a non-contributing collector, re-read the active count each eviction batch, and record each job's ops event in the same transaction as its last batch.
+  evidence: The upsert clears `expired_at` only for an authorised writer, so a still-seen Listing can be purged; evict reads the count once; a retried partial job undercounts.

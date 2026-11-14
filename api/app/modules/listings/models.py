@@ -1,8 +1,8 @@
-"""listings.models: ``sources`` and ``listings`` (DDL in migration 0011_listings) and
-``provider_runs`` (0013_provider_runs).
+"""listings.models: ``sources`` and ``listings`` (DDL in migration 0011_listings),
+``provider_runs`` (0013_provider_runs) and ``listing_blocks`` (0015_listing_maintenance).
 
-``sources`` and ``listings`` are global tables with no ``owner_id`` (AD-5). Foreign keys are declared in the
-migration (AD-2: no ORM link into another module's table).
+``sources``, ``listings`` and ``listing_blocks`` are global tables with no ``owner_id`` (AD-5).
+Foreign keys are declared in the migration (AD-2: no ORM link into another module's table).
 """
 
 import uuid
@@ -89,6 +89,21 @@ class ProviderRun(Base):
     poll_attempts: Mapped[int] = mapped_column(Integer, server_default="0")
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class ListingBlock(Base):
+    """One takedown (Story 2.5): a Listing (``source`` + ``value`` = ``source_job_id``), a URL
+    (canonical form) or a company (trimmed, case-folded) that is never ingested again."""
+
+    __tablename__ = "listing_blocks"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid7)
+    kind: Mapped[str] = mapped_column(Text)
+    source: Mapped[str | None] = mapped_column(Text)
+    value: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
