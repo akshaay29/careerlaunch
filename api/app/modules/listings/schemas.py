@@ -2,6 +2,7 @@
 
 import uuid
 from datetime import date, datetime
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -39,3 +40,50 @@ class ListingList(BaseModel):
 
     items: list[ListingOut]
     next_cursor: str | None
+
+
+class ProviderUsageStatus(BaseModel):
+    """Whether collection runs for the Student now. ``reason`` (when paused):
+    ``key_invalid``, ``credit_exhausted``, ``not_permitted`` or ``account_blocked``;
+    ``exhausted_until``: when exhausted credit stops blocking (the billing-cycle end)."""
+
+    status: Literal["active", "paused"]
+    reason: str | None
+    exhausted_until: datetime | None
+
+
+class ProviderUsageCaps(BaseModel):
+    per_run_usd: float
+    monthly_usd: float
+    is_default: bool
+
+
+class ProviderUsageMonth(BaseModel):
+    """This UTC calendar month: ``spent_usd`` recorded so far; ``committed_usd`` adds what
+    runs in progress may still charge (counted against ``monthly_cap_usd``)."""
+
+    spent_usd: float
+    committed_usd: float
+    monthly_cap_usd: float
+
+
+class ProviderUsageRun(BaseModel):
+    """One collection run. ``status``: ``starting``, ``running``, ``succeeded``, ``failed``
+    or ``refused``; ``error_kind`` says why it failed or was refused."""
+
+    created_at: datetime
+    status: Literal["starting", "running", "succeeded", "failed", "refused"]
+    error_kind: str | None
+    estimated_cost_usd: float | None
+    cost_usd: float | None
+    items: int | None
+    ingested: int | None
+
+
+class ProviderUsage(BaseModel):
+    """My collection status, caps, this month's spend and my latest 30 runs, newest first."""
+
+    status: ProviderUsageStatus
+    caps: ProviderUsageCaps
+    month: ProviderUsageMonth
+    runs: list[ProviderUsageRun]

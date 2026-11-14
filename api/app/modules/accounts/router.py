@@ -23,6 +23,8 @@ from app.modules.accounts.schemas import (
     ProviderKeyInput,
     ProviderKeyMeta,
     RightsNotice,
+    SpendCapsInput,
+    SpendCapsOut,
 )
 from app.ports.provider_runner import ProviderRunner, provider_runner_dependency
 
@@ -193,3 +195,34 @@ async def delete_provider_key(actor: CurrentActor, session: Session) -> Response
     await service.delete_credential(session, actor.id)
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# --------------------------------------------------------------------------- spend caps (AD-12)
+
+
+def _caps_out(caps: service.SpendCapsView) -> SpendCapsOut:
+    return SpendCapsOut(
+        per_run_usd=float(caps.per_run_usd),
+        monthly_usd=float(caps.monthly_usd),
+        is_default=caps.is_default,
+    )
+
+
+@router.get("/spend-caps", response_model=SpendCapsOut, operation_id="getSpendCaps")
+async def get_spend_caps(actor: CurrentActor, session: Session) -> SpendCapsOut:
+    return _caps_out(await service.get_spend_caps(session, actor.id))
+
+
+@router.put(
+    "/spend-caps",
+    response_model=SpendCapsOut,
+    operation_id="putSpendCaps",
+    responses={422: {"description": "A cap is out of bounds", **_PROBLEM}},
+)
+async def put_spend_caps(
+    body: SpendCapsInput, actor: CurrentActor, session: Session
+) -> SpendCapsOut:
+    """Set my per-run and monthly caps. They apply from the next run."""
+    caps = await service.set_spend_caps(session, actor.id, body.per_run_usd, body.monthly_usd)
+    await session.commit()
+    return _caps_out(caps)

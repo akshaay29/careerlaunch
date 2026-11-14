@@ -1,5 +1,6 @@
 """accounts.service: provisioning, admin promotion (AD-5), consent (AD-11), account
-deletion (FR-2, AD-17) and Provider Keys (FR-28, AD-6).
+deletion (FR-2, AD-17), Provider Keys (FR-28, AD-6), provider status and spend caps
+(AD-12).
 
 Takes the session; never commits.
 """
@@ -7,6 +8,7 @@ Takes the session; never commits.
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from decimal import Decimal
 from typing import Literal, cast
 
 from pydantic import SecretStr
@@ -339,7 +341,8 @@ async def store_credential(
     provider: str = APIFY,
 ) -> CredentialMeta:
     """Encrypt and store ``token`` as the owner's key for ``provider``, replacing any existing
-    one in place (same row id), and publish ``ProviderKeyChanged(removed=False)``. The token
+    one in place (same row id), clear the owner's ``provider_status`` (a fixed key resumes
+    collection) and publish ``ProviderKeyChanged(removed=False)``. The token
     must already be validated (outside any transaction). ``provider_runs`` consent is checked
     again under the account lock (it may have been revoked while the provider was called).
     Never commits."""
@@ -360,6 +363,9 @@ async def store_credential(
         last4=plaintext[-4:],
         provider_user_id=provider_user_id[:100] if provider_user_id else None,
     )
+    # A fixed key ends any pause (key invalid, blocked, credit): the next tick runs, and
+    # caps are still checked at every start.
+    await repo.delete_provider_status(session, owner_id)
     await publish(session, ProviderKeyChanged(owner_id=owner_id, removed=False))
     return _meta(provider, row)
 
@@ -407,10 +413,21 @@ async def decrypt_credential(
 # --------------------------------------------------------------------------- provider status
 
 
+PauseReason = Literal["key_invalid", "credit_exhausted", "not_permitted", "account_blocked"]
+PAUSE_REASONS: tuple[PauseReason, ...] = (
+    "key_invalid",
+    "credit_exhausted",
+    "not_permitted",
+    "account_blocked",
+)
+CREDIT_EXHAUSTED: PauseReason = "credit_exhausted"
+
+
 @dataclass(frozen=True)
 class ProviderStatusView:
-    """The owner's collection status (AD-12). ``status`` is ``active`` or ``paused``;
-    ``exhausted_until`` (credit exhausted) blocks runs until that time even when active."""
+    """The owner's collection status (AD-12). ``status`` is ``active`` or ``paused`` (with a
+    ``reason``); ``exhausted_until`` (credit exhausted) blocks runs until that time, after
+    which a ``credit_exhausted`` pause no longer blocks (collection resumes on its own)."""
 
     status: Literal["active", "paused"]
     reason: str | None
@@ -418,20 +435,116 @@ class ProviderStatusView:
 
     def blocks_runs(self, now: datetime) -> str | None:
         """Why a run may not start now (``paused`` or ``exhausted``), or None."""
+        exhausted = self.exhausted_until is not None and self.exhausted_until > now
         if self.status != "active":
+            if self.reason == CREDIT_EXHAUSTED and self.exhausted_until is not None:
+                return "exhausted" if exhausted else None
             return "paused"
-        if self.exhausted_until is not None and self.exhausted_until > now:
-            return "exhausted"
-        return None
+        return "exhausted" if exhausted else None
+
+    def effective(self, now: datetime) -> ProviderStatusView:
+        """The status as the Student sees it ``now``: a pause that no longer blocks reads as
+        active."""
+        if self.blocks_runs(now) is None:
+            return ACTIVE_PROVIDER_STATUS
+        if self.status == "active":  # active with credit exhausted until a future time
+            return ProviderStatusView("paused", CREDIT_EXHAUSTED, self.exhausted_until)
+        return self
 
 
 ACTIVE_PROVIDER_STATUS = ProviderStatusView("active", None, None)
 
 
 async def get_provider_status(session: AsyncSession, owner_id: uuid.UUID) -> ProviderStatusView:
-    """The owner's provider status; no row means active."""
+    """The owner's provider status as stored; no row means active."""
     row = await repo.get_provider_status(session, owner_id)
     if row is None:
         return ACTIVE_PROVIDER_STATUS
     status: Literal["active", "paused"] = "active" if row.status == "active" else "paused"
     return ProviderStatusView(status, row.reason, row.exhausted_until)
+
+
+async def credential_replaced_since(
+    session: AsyncSession, owner_id: uuid.UUID, since: datetime, provider: str = APIFY
+) -> bool:
+    """True when the owner's key for ``provider`` was saved after ``since``. A failure of an
+    older key must not pause a Student who has just saved a new one."""
+    row = await repo.get_credential(session, owner_id, provider)
+    return row is not None and row.updated_at > since
+
+
+async def pause_provider(
+    session: AsyncSession,
+    owner_id: uuid.UUID,
+    reason: PauseReason,
+    exhausted_until: datetime | None = None,
+) -> None:
+    """Pause the owner's collection with ``reason`` in the caller's transaction (called by
+    ``listings`` when Apify refuses a Student run). ``exhausted_until`` (credit exhausted
+    only) is when the pause stops blocking. Schedules are never touched: while paused every
+    start is refused cheaply. ``store_credential`` clears the pause."""
+    if reason not in PAUSE_REASONS:
+        raise ValueError(f"unknown pause reason {reason!r}")
+    if (exhausted_until is not None) != (reason == CREDIT_EXHAUSTED):
+        raise ValueError("exhausted_until is set for a credit_exhausted pause only")
+    await repo.upsert_provider_status(
+        session, owner_id, status="paused", reason=reason, exhausted_until=exhausted_until
+    )
+
+
+# --------------------------------------------------------------------------- spend caps
+
+PER_RUN_MIN = Decimal("0.05")
+PER_RUN_MAX = Decimal("2.00")
+MONTHLY_MIN = Decimal("0.25")
+MONTHLY_MAX = Decimal(100)
+CAP_ORDER_MESSAGE = "The monthly cap must be at least the per-run cap."
+
+
+@dataclass(frozen=True)
+class SpendCapsView:
+    """The owner's caps in USD; ``is_default`` when the Student never set their own."""
+
+    per_run_usd: Decimal
+    monthly_usd: Decimal
+    is_default: bool
+
+
+def default_spend_caps() -> SpendCapsView:
+    settings = get_settings()
+    return SpendCapsView(
+        Decimal(str(settings.collect_max_charge_usd)),
+        Decimal(str(settings.default_monthly_cap_usd)),
+        True,
+    )
+
+
+async def get_spend_caps(session: AsyncSession, owner_id: uuid.UUID) -> SpendCapsView:
+    """The owner's caps; no row means the defaults."""
+    row = await repo.get_spend_caps(session, owner_id)
+    if row is None:
+        return default_spend_caps()
+    return SpendCapsView(row.per_run_usd, row.monthly_usd, False)
+
+
+async def set_spend_caps(
+    session: AsyncSession, owner_id: uuid.UUID, per_run_usd: Decimal, monthly_usd: Decimal
+) -> SpendCapsView:
+    """Store the owner's caps (USD, at most 4 decimals). Per-run 0.05..2.00, monthly
+    0.25..100 and monthly >= per-run; anything else is a 422 and nothing is written."""
+    per_run = Decimal(per_run_usd).quantize(Decimal("0.0001"))
+    monthly = Decimal(monthly_usd).quantize(Decimal("0.0001"))
+    if not PER_RUN_MIN <= per_run <= PER_RUN_MAX:
+        raise InvalidInputError(
+            ["body", "per_run_usd"], "The per-run cap must be between USD 0.05 and 2.00."
+        )
+    if not MONTHLY_MIN <= monthly <= MONTHLY_MAX:
+        raise InvalidInputError(
+            ["body", "monthly_usd"], "The monthly cap must be between USD 0.25 and 100."
+        )
+    if monthly < per_run:
+        raise InvalidInputError(["body", "monthly_usd"], CAP_ORDER_MESSAGE)
+    if not await repo.lock_for_consent_change(session, owner_id):
+        raise NotFoundError("No account has this id.")
+    await repo.upsert_spend_caps(session, owner_id, per_run_usd=per_run, monthly_usd=monthly)
+    return SpendCapsView(per_run, monthly, False)

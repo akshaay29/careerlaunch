@@ -498,6 +498,119 @@ export type ProviderKeyMeta = {
 };
 
 /**
+ * ProviderUsage
+ *
+ * My collection status, caps, this month's spend and my latest 30 runs, newest first.
+ */
+export type ProviderUsage = {
+    status: ProviderUsageStatus;
+    caps: ProviderUsageCaps;
+    month: ProviderUsageMonth;
+    /**
+     * Runs
+     */
+    runs: Array<ProviderUsageRun>;
+};
+
+/**
+ * ProviderUsageCaps
+ */
+export type ProviderUsageCaps = {
+    /**
+     * Per Run Usd
+     */
+    per_run_usd: number;
+    /**
+     * Monthly Usd
+     */
+    monthly_usd: number;
+    /**
+     * Is Default
+     */
+    is_default: boolean;
+};
+
+/**
+ * ProviderUsageMonth
+ *
+ * This UTC calendar month: ``spent_usd`` recorded so far; ``committed_usd`` adds what
+ * runs in progress may still charge (counted against ``monthly_cap_usd``).
+ */
+export type ProviderUsageMonth = {
+    /**
+     * Spent Usd
+     */
+    spent_usd: number;
+    /**
+     * Committed Usd
+     */
+    committed_usd: number;
+    /**
+     * Monthly Cap Usd
+     */
+    monthly_cap_usd: number;
+};
+
+/**
+ * ProviderUsageRun
+ *
+ * One collection run. ``status``: ``starting``, ``running``, ``succeeded``, ``failed``
+ * or ``refused``; ``error_kind`` says why it failed or was refused.
+ */
+export type ProviderUsageRun = {
+    /**
+     * Created At
+     */
+    created_at: string;
+    /**
+     * Status
+     */
+    status: 'starting' | 'running' | 'succeeded' | 'failed' | 'refused';
+    /**
+     * Error Kind
+     */
+    error_kind: string | null;
+    /**
+     * Estimated Cost Usd
+     */
+    estimated_cost_usd: number | null;
+    /**
+     * Cost Usd
+     */
+    cost_usd: number | null;
+    /**
+     * Items
+     */
+    items: number | null;
+    /**
+     * Ingested
+     */
+    ingested: number | null;
+};
+
+/**
+ * ProviderUsageStatus
+ *
+ * Whether collection runs for the Student now. ``reason`` (when paused):
+ * ``key_invalid``, ``credit_exhausted``, ``not_permitted`` or ``account_blocked``;
+ * ``exhausted_until``: when exhausted credit stops blocking (the billing-cycle end).
+ */
+export type ProviderUsageStatus = {
+    /**
+     * Status
+     */
+    status: 'active' | 'paused';
+    /**
+     * Reason
+     */
+    reason: string | null;
+    /**
+     * Exhausted Until
+     */
+    exhausted_until: string | null;
+};
+
+/**
  * ResumeDownload
  *
  * A signed URL that downloads the file as an attachment; it stops working at
@@ -662,6 +775,45 @@ export type SkillRef = {
      * Label
      */
     label: string;
+};
+
+/**
+ * SpendCapsInput
+ *
+ * New caps in USD: per-run 0.05 to 2.00, monthly 0.25 to 100, and monthly at least the
+ * per-run cap.
+ */
+export type SpendCapsInput = {
+    /**
+     * Per Run Usd
+     */
+    per_run_usd: number | string;
+    /**
+     * Monthly Usd
+     */
+    monthly_usd: number | string;
+};
+
+/**
+ * SpendCapsOut
+ *
+ * The Student's spend caps in USD. ``is_default``: never set, so the platform defaults
+ * apply. Every run is refused before it starts when its estimate is above ``per_run_usd``
+ * or when it could take this month's committed spend above ``monthly_usd``.
+ */
+export type SpendCapsOut = {
+    /**
+     * Per Run Usd
+     */
+    per_run_usd: number;
+    /**
+     * Monthly Usd
+     */
+    monthly_usd: number;
+    /**
+     * Is Default
+     */
+    is_default: boolean;
 };
 
 /**
@@ -899,6 +1051,45 @@ export type PutProviderKeyResponses = {
 };
 
 export type PutProviderKeyResponse = PutProviderKeyResponses[keyof PutProviderKeyResponses];
+
+export type GetSpendCapsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/spend-caps';
+};
+
+export type GetSpendCapsResponses = {
+    /**
+     * Successful Response
+     */
+    200: SpendCapsOut;
+};
+
+export type GetSpendCapsResponse = GetSpendCapsResponses[keyof GetSpendCapsResponses];
+
+export type PutSpendCapsData = {
+    body: SpendCapsInput;
+    path?: never;
+    query?: never;
+    url: '/api/v1/spend-caps';
+};
+
+export type PutSpendCapsErrors = {
+    /**
+     * A cap is out of bounds
+     */
+    422: unknown;
+};
+
+export type PutSpendCapsResponses = {
+    /**
+     * Successful Response
+     */
+    200: SpendCapsOut;
+};
+
+export type PutSpendCapsResponse = PutSpendCapsResponses[keyof PutSpendCapsResponses];
 
 export type ListResumesData = {
     body?: never;
@@ -1421,3 +1612,19 @@ export type GetListingResponses = {
 };
 
 export type GetListingResponse = GetListingResponses[keyof GetListingResponses];
+
+export type GetProviderUsageData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/provider-usage';
+};
+
+export type GetProviderUsageResponses = {
+    /**
+     * Successful Response
+     */
+    200: ProviderUsage;
+};
+
+export type GetProviderUsageResponse = GetProviderUsageResponses[keyof GetProviderUsageResponses];

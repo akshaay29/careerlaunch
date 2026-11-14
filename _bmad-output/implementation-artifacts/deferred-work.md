@@ -70,3 +70,16 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-2-3-collect-linkedin-listings-on-a-schedule.md`
   summary: On account deletion, abort in-flight Apify runs, and decide whether anonymised `provider_runs` cost history should outlive the account (SET NULL plus a purpose marker) for spend accounting.
   evidence: `provider_runs.owner_id` CASCADEs, so cost rows vanish and a running actor keeps billing until its max charge.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-4-see-my-usage-set-spend-caps-and-pause-on-failure.md`
+  summary: Show the per-run estimate next to the per-run cap field so a Student does not set a cap below it (every run would be refused `run_cap`).
+  evidence: The minimum per-run cap (USD 0.05) is below the default estimate (100 items x USD 0.001 = 0.10); the reason is visible but the form gives no hint.
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-4-see-my-usage-set-spend-caps-and-pause-on-failure.md`
+  summary: Re-probe `account_blocked` and `not_permitted` pauses, which only a key re-save clears today.
+  evidence: These pauses have no `exhausted_until`; a Student whose Apify account was unblocked stays paused until they replace the token.
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-4-see-my-usage-set-spend-caps-and-pause-on-failure.md`
+  summary: Collapse repeated daily `refused` rows in the usage list and index `provider_runs (created_at)` if the platform cap is ever enabled at scale.
+  evidence: A paused Student gets a refused row each day, which pushes real runs out of the latest 30; the platform-wide month scan has no created_at index.
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-4-see-my-usage-set-spend-caps-and-pause-on-failure.md`
+  summary: Emit an ops event when a Student is paused or changes caps, notify them in-app or by email, and add accessibility attributes and component tests to the caps form.
+  evidence: Only the failed run row records a pause today; the caps form ignores the `field` that `precheckCaps` returns; web has no component test harness.

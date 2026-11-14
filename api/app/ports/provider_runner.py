@@ -7,11 +7,13 @@ so ``modules`` never import ``adapters``.
 
 Story 2.2 added token validation. Story 2.3 adds the run methods (start a run, read its
 state, fetch its items); ``listings.service`` (``start_provider_run`` and the poll of the run
-it started) is their only caller. Every method takes the token as a ``SecretStr``.
+it started) is their only caller. Story 2.4 adds ``ProviderRejected.kind`` and
+``billing_cycle_end``. Every method takes the token as a ``SecretStr``.
 """
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Literal, Protocol, runtime_checkable
 
 from fastapi import Request
@@ -30,10 +32,22 @@ class ProviderUnavailable(ProviderError):
     """The provider could not answer: network error, timeout, 5xx or 429."""
 
 
+RejectionKind = Literal["credit", "permission", "blocked"]
+
+
 class ProviderRejected(ProviderError):
     """The provider refused the request for the account's credit or plan (HTTP 402 or 403
-    on a run call): e.g. exhausted credit, or a token not allowed to run the actor. Story 2.4
-    turns this into a pause."""
+    on a run call). ``kind`` says why, and ``listings`` pauses the Student accordingly:
+
+    * ``credit``: the account's credit or usage limit is used up (402, or a usage/credit
+      error type);
+    * ``permission``: the token may not do this (403 ``insufficient-permissions``);
+    * ``blocked``: any other refusal (e.g. a blocked or disabled account).
+    """
+
+    def __init__(self, message: str = "", *, kind: RejectionKind = "blocked") -> None:
+        super().__init__(message)
+        self.kind: RejectionKind = kind
 
 
 RunStatus = Literal["READY", "RUNNING", "SUCCEEDED", "FAILED", "TIMED-OUT", "ABORTED"]
@@ -93,6 +107,11 @@ class ProviderRunner(Protocol):
         never raises for a provider error (it is logged)."""
         ...
 
+    async def billing_cycle_end(self, token: SecretStr) -> datetime | None:
+        """When the account's current monthly usage cycle ends (UTC), or None when unknown.
+        Never raises. Callers hold no database transaction."""
+        ...
+
 
 class LazyProviderRunner:
     """Builds the real adapter on first use, so creating the app needs no configuration."""
@@ -132,6 +151,9 @@ class LazyProviderRunner:
 
     async def abort_run(self, token: SecretStr, run_id: str) -> None:
         await self._get().abort_run(token, run_id)
+
+    async def billing_cycle_end(self, token: SecretStr) -> datetime | None:
+        return await self._get().billing_cycle_end(token)
 
 
 _installed: ProviderRunner | None = None

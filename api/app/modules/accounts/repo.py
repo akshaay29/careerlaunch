@@ -1,8 +1,9 @@
 """accounts.repo: SQL for the ``accounts``, ``consents``, ``deleted_accounts``,
-``provider_credentials`` and ``provider_status`` tables only (AD-2)."""
+``provider_credentials``, ``provider_status`` and ``spend_caps`` tables only (AD-2)."""
 
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
+from decimal import Decimal
 from typing import Literal
 
 from sqlalchemy import Text, Uuid, delete, exists, func, literal, or_, select, update
@@ -16,6 +17,7 @@ from app.modules.accounts.models import (
     DeletedAccount,
     ProviderCredential,
     ProviderStatus,
+    SpendCaps,
 )
 
 
@@ -307,3 +309,47 @@ async def get_provider_status(
     session: AsyncSession, owner_id: uuid.UUID
 ) -> ProviderStatus | None:
     return await session.get(ProviderStatus, owner_id, populate_existing=True)
+
+
+async def upsert_provider_status(
+    session: AsyncSession,
+    owner_id: uuid.UUID,
+    *,
+    status: str,
+    reason: str | None,
+    exhausted_until: datetime | None,
+) -> None:
+    values = {
+        "status": status,
+        "reason": reason,
+        "exhausted_until": exhausted_until,
+        "updated_at": func.now(),
+    }
+    await session.execute(
+        insert(ProviderStatus)
+        .values(owner_id=owner_id, **values)
+        .on_conflict_do_update(index_elements=[ProviderStatus.owner_id], set_=values)
+    )
+
+
+async def delete_provider_status(session: AsyncSession, owner_id: uuid.UUID) -> None:
+    await session.execute(
+        delete(ProviderStatus)
+        .where(ProviderStatus.owner_id == owner_id)
+        .execution_options(synchronize_session=False)
+    )
+
+
+async def get_spend_caps(session: AsyncSession, owner_id: uuid.UUID) -> SpendCaps | None:
+    return await session.get(SpendCaps, owner_id, populate_existing=True)
+
+
+async def upsert_spend_caps(
+    session: AsyncSession, owner_id: uuid.UUID, *, per_run_usd: Decimal, monthly_usd: Decimal
+) -> None:
+    values = {"per_run_usd": per_run_usd, "monthly_usd": monthly_usd, "updated_at": func.now()}
+    await session.execute(
+        insert(SpendCaps)
+        .values(owner_id=owner_id, **values)
+        .on_conflict_do_update(index_elements=[SpendCaps.owner_id], set_=values)
+    )

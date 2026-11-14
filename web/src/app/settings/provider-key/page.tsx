@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { SignOutButton } from "@/components/auth/sign-out-button";
-import { ProviderKeyManager } from "@/components/provider-key/provider-key-manager";
+import { ProviderKeyPanel } from "@/components/provider-key/provider-key-panel";
 import { SETTINGS_PATH } from "@/lib/auth-paths";
 import { APIFY_CONSOLE_URL, APIFY_TOKENS_URL } from "@/lib/provider-key";
 
@@ -60,7 +60,7 @@ export default function ProviderKeySettingsPage() {
           Apify&apos;s free plan includes USD 5 of credit each month.
         </p>
       </section>
-      <ProviderKeyManager />
+      <ProviderKeyPanel />
     </main>
   );
 }

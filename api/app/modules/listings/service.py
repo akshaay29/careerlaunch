@@ -7,8 +7,10 @@ Takes the session; never commits (routers and tasks commit).
   bind parameters, the description discarded, visibility from ``pool_contribution`` consent.
 * :func:`ingest_drafts` stores a batch through it (one savepoint per draft) and publishes one
   ``ListingsIngested`` per call; :func:`collect_and_ingest` runs one adapter through it.
-* :func:`start_provider_run` is the ONLY caller of ``ProviderRunner.start_run`` (AD-12);
-  :func:`poll_provider_run` collects the run's results through :func:`ingest_drafts`.
+* :func:`start_provider_run` is the ONLY caller of ``ProviderRunner.start_run`` (AD-12) and
+  checks the spend caps before any spend; :func:`poll_provider_run` collects the run's
+  results through :func:`ingest_drafts`. Apify refusing a Student run pauses the Student
+  (``accounts.service.pause_provider``). :func:`provider_usage` is the Student's usage view.
 * Browsing returns only Listings visible to the actor (pool, or private to them) that are
   not expired.
 """
@@ -19,7 +21,7 @@ import logging
 import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -51,6 +53,7 @@ from app.ports.provider_runner import (
     TERMINAL_FAILURES,
     ProviderKeyInvalid,
     ProviderRejected,
+    ProviderRunner,
     ProviderUnavailable,
     get_provider_runner,
 )
@@ -410,16 +413,44 @@ def _query(params: dict[str, list[str]], limit: int) -> SourceQuery:
     )
 
 
+def month_start(now: datetime) -> datetime:
+    """The first instant of ``now``'s UTC calendar month."""
+    now = now.astimezone(UTC)
+    return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+
+def next_month_start(now: datetime) -> datetime:
+    """The first instant of the UTC calendar month after ``now``'s."""
+    start = month_start(now)
+    if start.month == 12:
+        return start.replace(year=start.year + 1, month=1)
+    return start.replace(month=start.month + 1)
+
+
+def estimate_usd(max_items: int) -> Decimal:
+    """A run's estimated cost: ``max_items x APIFY_PRICE_PER_ITEM_USD``, to 4 decimals."""
+    price = Decimal(str(get_settings().apify_price_per_item_usd))
+    return (price * max_items).quantize(Decimal("0.0001"))
+
+
 async def _refusal(
     session: AsyncSession,
     owner_id: uuid.UUID | None,
     actor: str | None,
     scope: dict[str, list[str]],
+    *,
+    estimate: Decimal,
+    charge: Decimal,
+    caps: accounts_service.SpendCapsView | None,
 ) -> str | None:
     """Why a run may not start now, or None. Checked in order: role titles to search for,
     ``provider_runs`` consent, ``provider_status`` (paused, credit exhausted), the platform
-    kill switch, the Source, the Provider Key, the actor allowlist. The System seed run (no
-    owner) skips the Student checks."""
+    kill switch, the Source, the Provider Key, the actor allowlist, then the caps (Story
+    2.4): ``run_cap`` (the ``estimate`` is above the per-run cap), ``monthly_cap`` (this
+    month's committed spend plus this run's ``charge`` is above the monthly cap) and
+    ``platform_cap`` (the same over every Student, above ``PLATFORM_MONTHLY_CAP_USD``).
+    The caller holds the owner's spend lock. The System seed run (no owner) skips the
+    Student checks and the caps."""
     if not scope["role_titles"]:
         return "no_preferences"
     if owner_id is not None:
@@ -442,6 +473,22 @@ async def _refusal(
             return "no_key"
     if actor is None:
         return "no_actor"
+    if owner_id is None or caps is None:
+        return None
+    if estimate > caps.per_run_usd:
+        return "run_cap"
+    since = month_start(utcnow())
+    own = await repo.month_spend(session, since, owner_id)
+    if own.committed + charge > caps.monthly_usd:
+        return "monthly_cap"
+    platform_cap = get_settings().platform_monthly_cap_usd
+    if platform_cap is not None:
+        # Serialises every Student's start while a platform cap is set (lock order: run
+        # key, owner, platform).
+        await repo.lock_spend(session, "platform")
+        everyone = await repo.month_spend(session, since)
+        if everyone.committed + charge > Decimal(str(platform_cap)):
+            return "platform_cap"
     return None
 
 
@@ -467,6 +514,54 @@ async def _owner_token(owner_id: uuid.UUID | None) -> SecretStr | None:
         return None
 
 
+@dataclass(frozen=True)
+class Pause:
+    """A pause to write with a failed run: the ``provider_status`` reason and, for exhausted
+    credit, when it ends."""
+
+    reason: accounts_service.PauseReason
+    exhausted_until: datetime | None = None
+
+
+_REJECTION_REASONS: dict[str, accounts_service.PauseReason] = {
+    "credit": "credit_exhausted",
+    "permission": "not_permitted",
+    "blocked": "account_blocked",
+}
+
+
+async def _pause_for(
+    owner_id: uuid.UUID | None, error: Exception, token: SecretStr | None
+) -> Pause | None:
+    """The pause an Apify refusal of a Student run calls for (None for the seed run). For
+    exhausted credit the end of the account's billing cycle is read from Apify (no
+    transaction may be open); unknown or not in the future, it is the next UTC month."""
+    if owner_id is None:
+        return None
+    if isinstance(error, ProviderKeyInvalid):
+        return Pause("key_invalid")
+    if not isinstance(error, ProviderRejected):
+        return None
+    reason = _REJECTION_REASONS.get(error.kind, "account_blocked")
+    if reason != "credit_exhausted":
+        return Pause(reason)
+    until = await _cycle_end(get_provider_runner(), token)
+    now = utcnow()
+    if until is None or until <= now:
+        until = next_month_start(now)
+    return Pause(reason, until)
+
+
+async def _cycle_end(runner: ProviderRunner, token: SecretStr | None) -> datetime | None:
+    if token is None:
+        return None
+    try:
+        return await runner.billing_cycle_end(token)
+    except Exception as exc:  # the port never raises; a bug must not stop the pause
+        logger.warning("provider_cycle_end_failed", extra={"exc_type": type(exc).__name__})
+        return None
+
+
 async def _fail_run(
     run_id: uuid.UUID,
     owner_id: uuid.UUID | None,
@@ -474,13 +569,32 @@ async def _fail_run(
     *,
     cost_usd: float | None = None,
     only: tuple[str, ...] = _ACTIVE,
+    pause: Pause | None = None,
 ) -> RunOutcome:
     """Mark a row in one of the ``only`` states ``failed`` (in its own transaction) and record
     ``listings.provider_run_failed``. A known ``cost_usd`` is stored; otherwise the last one
-    recorded is kept. Never starts a replacement run."""
+    recorded is kept. Never starts a replacement run. A ``pause`` (Student runs only) is
+    written in the same transaction, even when the row had already moved on (Apify's answer
+    holds either way), unless the owner's key was saved after the run was created."""
     async with get_sessionmaker()() as session:
         run = await repo.get_run(session, run_id, for_update=True)
+        paused = False
+        if (
+            run is not None
+            and pause is not None
+            and run.owner_id is not None
+            # A rejection of an old key must not pause a Student who has since saved a new one.
+            and not await accounts_service.credential_replaced_since(
+                session, run.owner_id, run.created_at
+            )
+        ):
+            await accounts_service.pause_provider(
+                session, run.owner_id, pause.reason, pause.exhausted_until
+            )
+            paused = True
         if run is None or run.status not in only:
+            if paused:
+                await session.commit()
             return _outcome(run_id, run)
         values: dict[str, Any] = {
             "status": "failed",
@@ -516,7 +630,9 @@ async def start_provider_run(
     """THE Apify spend path (AD-12): the only caller of ``ProviderRunner.start_run``.
 
     ``owner_id`` is the Student whose Provider Key pays, or None for the System seed run,
-    which passes the owner's ``token`` (no other caller passes one) and may lower the caps.
+    which passes the owner's ``token`` (no other caller passes one) and may set
+    ``max_charge_usd``. A Student run's ``max_charge_usd`` is the Student's per-run cap and
+    its estimate ``max_items x APIFY_PRICE_PER_ITEM_USD``; both are stored on the row.
     ``run_key`` is unique:
 
     1. In a short transaction (serialised per ``run_key``): a row that already has an Apify
@@ -524,8 +640,9 @@ async def start_provider_run(
        is another start in flight (a no-op) while younger than
        :data:`STARTING_CRASHED_AFTER`; an older one crashed after the call may have started a
        run, becomes ``failed``/``start_unknown`` and is never restarted. Otherwise the scope
-       (role titles), consent, ``provider_status``, the kill switch, the Source, the key and
-       the actor allowlist are checked: a failure stores the row as ``refused`` with its
+       (role titles), consent, ``provider_status``, the kill switch, the Source, the key,
+       the actor allowlist and (under the owner's spend lock) the caps are checked: a
+       failure stores the row as ``refused`` with its
        ``error_kind`` (a later call for the same key checks again); success stores it as
        ``starting``. Then commit.
     2. With no transaction open, the key is decrypted and the first allowlisted actor is
@@ -537,22 +654,24 @@ async def start_provider_run(
        meanwhile) the started run is an orphan: it is aborted (best effort) and
        ``listings.provider_run_orphaned`` is recorded. A start error marks the row
        ``failed`` with its ``error_kind`` instead (never retried: the next scheduled run
-       collects again).
+       collects again); an invalid key or an Apify refusal also pauses the Student.
     """
     if purpose not in PURPOSES:
         raise ValueError(f"unknown provider-run purpose {purpose!r}")
     if (owner_id is None) != (token is not None):
         raise ValueError("only the System seed run (no owner) passes its own token")
+    if owner_id is not None and max_charge_usd is not None:
+        raise ValueError("a Student run is charged at most the Student's per-run cap")
     settings = get_settings()
     actors = settings.apify_actors
     actor = actors[0] if actors else None
     limit = max_items if max_items is not None else settings.collect_max_items
     if not 1 <= limit <= 1000:
         raise ValueError("max_items must be 1..1000")
-    charge = max_charge_usd if max_charge_usd is not None else settings.collect_max_charge_usd
-    if not 0 < charge <= 50:
+    if max_charge_usd is not None and not 0 < max_charge_usd <= 50:
         raise ValueError("max_charge_usd must be > 0 and <= 50")
     scope = _clean_params(params)
+    estimate = estimate_usd(limit)
 
     # 1. Commit the row before any network call.
     async with get_sessionmaker()() as session:
@@ -568,14 +687,29 @@ async def start_provider_run(
                     existing_id, owner_id, "start_unknown", only=("starting",)
                 )
             return _outcome(existing.id, existing)
-        refusal = await _refusal(session, owner_id, actor, scope)
+        caps: accounts_service.SpendCapsView | None = None
+        if owner_id is None:
+            seed_charge = (
+                max_charge_usd if max_charge_usd is not None else settings.collect_max_charge_usd
+            )
+            charge_usd = Decimal(str(seed_charge))
+        else:
+            # Every start of this owner's runs is serialised here, so two runs can never
+            # together pass the monthly cap.
+            await repo.lock_spend(session, f"owner:{owner_id}")
+            caps = await accounts_service.get_spend_caps(session, owner_id)
+            charge_usd = caps.per_run_usd
+        refusal = await _refusal(
+            session, owner_id, actor, scope, estimate=estimate, charge=charge_usd, caps=caps
+        )
         values: dict[str, Any] = {
             "status": "refused" if refusal else "starting",
             "error_kind": refusal,
             "actor": actor,
             "params": scope,
             "max_items": limit,
-            "max_charge_usd": Decimal(str(charge)),
+            "max_charge_usd": charge_usd,
+            "estimated_cost_usd": estimate,
             "finished_at": utcnow() if refusal else None,
         }
         if existing is None:
@@ -601,6 +735,7 @@ async def start_provider_run(
         return RunOutcome(run_id, "refused", refusal)
     if actor is None:  # _refusal returns "no_actor" first; kept explicit for type checkers
         raise RuntimeError("no allowlisted actor")
+    charge = float(charge_usd)
 
     # 2. No transaction open from here until the result is written.
     try:
@@ -623,10 +758,12 @@ async def start_provider_run(
         apify_run_id = await get_provider_runner().start_run(
             token, actor, run_input, max_items=limit, max_charge_usd=charge
         )
-    except ProviderKeyInvalid:
-        return await _fail_run(run_id, owner_id, "key_invalid")
-    except ProviderRejected:
-        return await _fail_run(run_id, owner_id, "rejected")
+    except ProviderKeyInvalid as exc:
+        pause = await _pause_for(owner_id, exc, token)
+        return await _fail_run(run_id, owner_id, "key_invalid", pause=pause)
+    except ProviderRejected as exc:
+        pause = await _pause_for(owner_id, exc, token)
+        return await _fail_run(run_id, owner_id, "rejected", pause=pause)
     except ProviderUnavailable:
         return await _fail_run(run_id, owner_id, "unavailable")
     except ValueError:
@@ -697,6 +834,7 @@ async def poll_provider_run(
       cost; never re-run.
     * ``ProviderUnavailable`` propagates (the job retries); a rejected or invalid key, a
       missing or unreadable key, or no master key fails the run (keeping the last known cost).
+      An invalid key or a rejection also pauses the Student (seed runs never pause).
     """
     async with get_sessionmaker()() as session:
         run = await repo.get_run(session, run_id)
@@ -725,10 +863,12 @@ async def poll_provider_run(
     runner = get_provider_runner()
     try:
         state = await runner.get_run(token, apify_run_id)
-    except ProviderKeyInvalid:
-        return await _fail_run(run_id, owner_id, "key_invalid")
-    except ProviderRejected:
-        return await _fail_run(run_id, owner_id, "rejected")
+    except ProviderKeyInvalid as exc:
+        pause = await _pause_for(owner_id, exc, token)
+        return await _fail_run(run_id, owner_id, "key_invalid", pause=pause)
+    except ProviderRejected as exc:
+        pause = await _pause_for(owner_id, exc, token)
+        return await _fail_run(run_id, owner_id, "rejected", pause=pause)
 
     if state.status in ("READY", "RUNNING"):
         now = utcnow()
@@ -764,10 +904,16 @@ async def poll_provider_run(
         return await _fail_run(run_id, owner_id, "no_dataset", cost_usd=state.usage_usd)
     try:
         items = await runner.fetch_items(token, state.dataset_id, limit=max_items)
-    except ProviderKeyInvalid:
-        return await _fail_run(run_id, owner_id, "key_invalid", cost_usd=state.usage_usd)
-    except ProviderRejected:
-        return await _fail_run(run_id, owner_id, "rejected", cost_usd=state.usage_usd)
+    except ProviderKeyInvalid as exc:
+        pause = await _pause_for(owner_id, exc, token)
+        return await _fail_run(
+            run_id, owner_id, "key_invalid", cost_usd=state.usage_usd, pause=pause
+        )
+    except ProviderRejected as exc:
+        pause = await _pause_for(owner_id, exc, token)
+        return await _fail_run(
+            run_id, owner_id, "rejected", cost_usd=state.usage_usd, pause=pause
+        )
     items = items[:max_items]
     item_count = len(items)
     drafts, bad_items = get_provider_source().drafts_from_items(actor, items)
@@ -835,6 +981,34 @@ async def reap_stale_runs() -> int:
 async def get_provider_run(session: AsyncSession, run_id: uuid.UUID) -> ProviderRun | None:
     """One provider run row (ids, caps, counts and cost only)."""
     return await repo.get_run(session, run_id)
+
+
+# --------------------------------------------------------------------------- usage (Story 2.4)
+
+USAGE_RUNS = 30
+
+
+@dataclass(frozen=True)
+class ProviderUsage:
+    """What the Student sees about their collection spend: their status as it stands now,
+    their caps, this UTC month's spend, and their latest runs (the rows carry ids and params
+    the router never returns)."""
+
+    status: accounts_service.ProviderStatusView
+    caps: accounts_service.SpendCapsView
+    month: repo.MonthSpend
+    runs: list[ProviderRun]
+
+
+async def provider_usage(session: AsyncSession, owner_id: uuid.UUID) -> ProviderUsage:
+    now = utcnow()
+    status = await accounts_service.get_provider_status(session, owner_id)
+    return ProviderUsage(
+        status=status.effective(now),
+        caps=await accounts_service.get_spend_caps(session, owner_id),
+        month=await repo.month_spend(session, month_start(now), owner_id),
+        runs=await repo.latest_runs(session, owner_id, USAGE_RUNS),
+    )
 
 
 # --------------------------------------------------------------------------- scheduling

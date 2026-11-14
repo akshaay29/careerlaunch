@@ -68,7 +68,7 @@ function formatTime(iso: string | null): string | null {
  * Add, replace or delete the Student's Apify token (FR-28). The token is sent once, on save,
  * and never shown again: after saving, only the masked last-4 hint is displayed.
  */
-export function ProviderKeyManager() {
+export function ProviderKeyManager({ onChanged }: { onChanged?: () => void } = {}) {
   const router = useRouter();
   const inputId = useId();
   const errorId = `${inputId}-error`;
@@ -137,6 +137,7 @@ export function ProviderKeyManager() {
         setReplacing(false);
         setLoad({ kind: "ok", meta: data, consented: true });
         setNotice("Your token was checked with Apify and saved.");
+        onChanged?.(); // saving a key clears a pause: the usage section must refetch
       } else if (response?.status === 401) {
         setLoad({ kind: "signed-out" });
       } else {
@@ -180,6 +181,7 @@ export function ProviderKeyManager() {
           consented,
         });
         setNotice("Your token was deleted. Collection under your key has stopped.");
+        onChanged?.();
       } else if (response?.status === 401) {
         setLoad({ kind: "signed-out" });
       } else {

@@ -2,7 +2,7 @@
 
 import { type Client, type ClientMeta, formDataBodySerializer, type Options as Options2, type RequestResult, type TDataShape } from './client';
 import { client } from './client.gen';
-import type { ActivateResumeData, ActivateResumeErrors, ActivateResumeResponses, DeleteDocumentData, DeleteDocumentErrors, DeleteDocumentResponses, DeleteMeData, DeleteMeErrors, DeleteMeResponses, DeleteProviderKeyData, DeleteProviderKeyResponses, DeleteResumeData, DeleteResumeErrors, DeleteResumeResponses, EditSkillProfileData, EditSkillProfileErrors, EditSkillProfileResponses, GetAdminMeData, GetAdminMeResponses, GetDocumentDownloadData, GetDocumentDownloadErrors, GetDocumentDownloadResponses, GetHealthData, GetHealthResponses, GetListingData, GetListingErrors, GetListingResponses, GetMeData, GetMeResponses, GetPreferencesData, GetPreferencesResponses, GetProviderKeyData, GetProviderKeyResponses, GetResumeDownloadData, GetResumeDownloadErrors, GetResumeDownloadResponses, GetSkillProfileData, GetSkillProfileResponses, GrantConsentData, GrantConsentErrors, GrantConsentResponses, ListConsentsData, ListConsentsResponses, ListDegreesData, ListDegreesResponses, ListDocumentsData, ListDocumentsErrors, ListDocumentsResponses, ListListingsData, ListListingsErrors, ListListingsResponses, ListResumesData, ListResumesErrors, ListResumesResponses, PutProviderKeyData, PutProviderKeyErrors, PutProviderKeyResponses, ResetSkillProfileData, ResetSkillProfileResponses, RevokeConsentData, RevokeConsentErrors, RevokeConsentResponses, SavePreferencesData, SavePreferencesErrors, SavePreferencesResponses, SuggestSkillsData, SuggestSkillsErrors, SuggestSkillsResponses, UploadDocumentData, UploadDocumentErrors, UploadDocumentResponses, UploadResumeData, UploadResumeErrors, UploadResumeResponses } from './types.gen';
+import type { ActivateResumeData, ActivateResumeErrors, ActivateResumeResponses, DeleteDocumentData, DeleteDocumentErrors, DeleteDocumentResponses, DeleteMeData, DeleteMeErrors, DeleteMeResponses, DeleteProviderKeyData, DeleteProviderKeyResponses, DeleteResumeData, DeleteResumeErrors, DeleteResumeResponses, EditSkillProfileData, EditSkillProfileErrors, EditSkillProfileResponses, GetAdminMeData, GetAdminMeResponses, GetDocumentDownloadData, GetDocumentDownloadErrors, GetDocumentDownloadResponses, GetHealthData, GetHealthResponses, GetListingData, GetListingErrors, GetListingResponses, GetMeData, GetMeResponses, GetPreferencesData, GetPreferencesResponses, GetProviderKeyData, GetProviderKeyResponses, GetProviderUsageData, GetProviderUsageResponses, GetResumeDownloadData, GetResumeDownloadErrors, GetResumeDownloadResponses, GetSkillProfileData, GetSkillProfileResponses, GetSpendCapsData, GetSpendCapsResponses, GrantConsentData, GrantConsentErrors, GrantConsentResponses, ListConsentsData, ListConsentsResponses, ListDegreesData, ListDegreesResponses, ListDocumentsData, ListDocumentsErrors, ListDocumentsResponses, ListListingsData, ListListingsErrors, ListListingsResponses, ListResumesData, ListResumesErrors, ListResumesResponses, PutProviderKeyData, PutProviderKeyErrors, PutProviderKeyResponses, PutSpendCapsData, PutSpendCapsErrors, PutSpendCapsResponses, ResetSkillProfileData, ResetSkillProfileResponses, RevokeConsentData, RevokeConsentErrors, RevokeConsentResponses, SavePreferencesData, SavePreferencesErrors, SavePreferencesResponses, SuggestSkillsData, SuggestSkillsErrors, SuggestSkillsResponses, UploadDocumentData, UploadDocumentErrors, UploadDocumentResponses, UploadResumeData, UploadResumeErrors, UploadResumeResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -117,6 +117,30 @@ export const getProviderKey = <ThrowOnError extends boolean = false>(options?: O
 export const putProviderKey = <ThrowOnError extends boolean = false>(options: Options<PutProviderKeyData, ThrowOnError>): RequestResult<PutProviderKeyResponses, PutProviderKeyErrors, ThrowOnError> => (options.client ?? client).put<PutProviderKeyResponses, PutProviderKeyErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/api/v1/provider-key',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Get Spend Caps
+ */
+export const getSpendCaps = <ThrowOnError extends boolean = false>(options?: Options<GetSpendCapsData, ThrowOnError>): RequestResult<GetSpendCapsResponses, unknown, ThrowOnError> => (options?.client ?? client).get<GetSpendCapsResponses, unknown, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/v1/spend-caps',
+    ...options
+});
+
+/**
+ * Put Spend Caps
+ *
+ * Set my per-run and monthly caps. They apply from the next run.
+ */
+export const putSpendCaps = <ThrowOnError extends boolean = false>(options: Options<PutSpendCapsData, ThrowOnError>): RequestResult<PutSpendCapsResponses, PutSpendCapsErrors, ThrowOnError> => (options.client ?? client).put<PutSpendCapsResponses, PutSpendCapsErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/v1/spend-caps',
     ...options,
     headers: {
         'Content-Type': 'application/json',
@@ -334,5 +358,17 @@ export const listListings = <ThrowOnError extends boolean = false>(options?: Opt
 export const getListing = <ThrowOnError extends boolean = false>(options: Options<GetListingData, ThrowOnError>): RequestResult<GetListingResponses, GetListingErrors, ThrowOnError> => (options.client ?? client).get<GetListingResponses, GetListingErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/api/v1/listings/{listing_id}',
+    ...options
+});
+
+/**
+ * Get Provider Usage
+ *
+ * My collection status, spend caps, this month's spend and latest runs. Never run ids,
+ * search parameters or tokens.
+ */
+export const getProviderUsage = <ThrowOnError extends boolean = false>(options?: Options<GetProviderUsageData, ThrowOnError>): RequestResult<GetProviderUsageResponses, unknown, ThrowOnError> => (options?.client ?? client).get<GetProviderUsageResponses, unknown, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/v1/provider-usage',
     ...options
 });

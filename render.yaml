@@ -72,3 +72,9 @@ services:
         value: "0.25"
       - key: PROVIDER_RUNS_ENABLED
         value: "true"
+      - key: DEFAULT_MONTHLY_CAP_USD
+        value: "4.00"
+      - key: APIFY_PRICE_PER_ITEM_USD
+        value: "0.001"
+      - key: PLATFORM_MONTHLY_CAP_USD
+        sync: false
