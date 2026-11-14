@@ -19,3 +19,15 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-3-sign-up-log-in-and-roles.md`
   summary: Make record_event tolerate an owner_id whose account was deleted (e.g. insert with owner_id NULL), so Story 1.9 purge jobs don't lose their ops_events rows.
   evidence: ops_events.owner_id now has an FK to accounts; job events for already-deleted owners fail to insert (caught and logged, event lost).
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-4-consent-for-provider-runs-and-the-shared-pool.md`
+  summary: Add a component or e2e harness to `web` and test ConsentPanel's 409 reload and that Withdraw is shown only on /settings/consent.
+  evidence: The web tests are only pure-logic `node --test` tests, so a UI regression such as losing Withdraw would ship undetected.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-4-consent-for-provider-runs-and-the-shared-pool.md`
+  summary: Add grievance and contact details to the DPDP rights notice, and keep its deletion promise true once Story 1.9 ships (bump RIGHTS_NOTICE_VERSION).
+  evidence: DPDP notices must say how to exercise rights. No contact address exists yet; the product owner must supply one.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-4-consent-for-provider-runs-and-the-shared-pool.md`
+  summary: When Epic 2 defines pool and run cancellation, update the consent texts (with a version bump) to say what happens to shared Listings and in-progress runs on withdrawal.
+  evidence: Informed consent needs those facts, and the behaviour isn't decided yet.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-4-consent-for-provider-runs-and-the-shared-pool.md`
+  summary: Unverified (medium if true): work can pass `require_consent` just before a withdrawal commits. Epic 2 callers must re-check the gate inside the job at the side effect, or lock the consent row.
+  evidence: The gate is an unlocked read. It is settled by how the first callers (Epic 2 provider runs) use it.

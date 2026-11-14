@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { ONBOARDING_PATH, safeNextPath } from "./auth-paths.ts";
+import { isProtectedPath, ONBOARDING_PATH, safeNextPath } from "./auth-paths.ts";
 
 test("unsafe next values fall back to /onboarding", () => {
   const unsafe = [
@@ -27,4 +27,13 @@ test("unsafe next values fall back to /onboarding", () => {
 test("same-origin paths pass through", () => {
   assert.equal(safeNextPath("/onboarding/x?y=1"), "/onboarding/x?y=1");
   assert.equal(safeNextPath("/"), "/");
+});
+
+test("onboarding and settings pages are protected", () => {
+  for (const path of ["/onboarding", "/onboarding/x", "/settings", "/settings/consent"]) {
+    assert.equal(isProtectedPath(path), true, path);
+  }
+  for (const path of ["/", "/login", "/signup", "/settingsx", "/auth/error"]) {
+    assert.equal(isProtectedPath(path), false, path);
+  }
 });

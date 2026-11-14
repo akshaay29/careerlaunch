@@ -4,9 +4,10 @@ export const LOGIN_PATH = "/login";
 export const SIGNUP_PATH = "/signup";
 export const ONBOARDING_PATH = "/onboarding";
 export const AUTH_ERROR_PATH = "/auth/error";
+export const SETTINGS_PATH = "/settings";
 
 /** Pages only a signed-in user may see (the proxy redirects others to /login). */
-export const PROTECTED_PREFIXES = [ONBOARDING_PATH];
+export const PROTECTED_PREFIXES = [ONBOARDING_PATH, SETTINGS_PATH];
 
 /** Pages a signed-in user is sent away from (to /onboarding). */
 export const GUEST_ONLY_PATHS = [LOGIN_PATH, SIGNUP_PATH];

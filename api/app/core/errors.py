@@ -31,9 +31,11 @@ class DomainError(Exception):
     slug: ClassVar[str] = "domain-error"
     title: ClassVar[str] = "Domain error"
 
-    def __init__(self, detail: str | None = None) -> None:
+    def __init__(self, detail: str | None = None, *, extra: dict[str, Any] | None = None) -> None:
         super().__init__(detail or self.title)
         self.detail = detail or self.title
+        # Extra problem members (RFC 9457 extensions), e.g. ``{"purpose": "provider_runs"}``.
+        self.extra: dict[str, Any] = dict(extra or {})
 
 
 class NotFoundError(DomainError):
@@ -64,6 +66,36 @@ class ConflictError(DomainError):
     status = 409
     slug = "conflict"
     title = "Conflict"
+
+
+class ConsentRequiredError(DomainError):
+    """The Student has no active consent on the current version for ``purpose`` (AD-11)."""
+
+    status = 403
+    slug = "consent-required"
+    title = "Consent required"
+
+    def __init__(self, purpose: str, detail: str | None = None) -> None:
+        super().__init__(
+            detail or f"Consent for '{purpose}' is required.", extra={"purpose": purpose}
+        )
+        self.purpose = purpose
+
+
+class ConsentVersionMismatchError(DomainError):
+    """A grant named a consent text version that is not the current one; nothing is written."""
+
+    status = 409
+    slug = "consent-version-mismatch"
+    title = "Consent version mismatch"
+
+    def __init__(self, purpose: str, current_version: str) -> None:
+        super().__init__(
+            "The consent text has changed. Review the current text and agree again.",
+            extra={"purpose": purpose, "current_version": current_version},
+        )
+        self.purpose = purpose
+        self.current_version = current_version
 
 
 class AuthUnavailableError(DomainError):
@@ -161,8 +193,16 @@ async def _validation_exception(request: Request, exc: Exception) -> JSONRespons
 
 async def _domain_exception(request: Request, exc: Exception) -> JSONResponse:
     assert isinstance(exc, DomainError)
+    # Standard members always win over extras.
+    reserved = {"type", "title", "status", "detail", "instance"}
+    extra = {k: v for k, v in exc.extra.items() if k not in reserved}
     return problem_response(
-        request, status=exc.status, slug=exc.slug, title=exc.title, detail=exc.detail
+        request,
+        status=exc.status,
+        slug=exc.slug,
+        title=exc.title,
+        detail=exc.detail,
+        extra=extra or None,
     )
 
 
