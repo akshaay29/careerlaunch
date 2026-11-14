@@ -6,6 +6,10 @@ Resume versions (FR-3): upload, list, activate, download (signed URL) and delete
 Skill Profile (FR-4): read, edit (add / remove / remove custom), reset, and vocabulary
 suggestions. Upload, activate, edit and reset start the bounded after-response drain of the
 ``priority`` queue (AD-4 priority path), which runs the extraction job.
+
+Preferences (FR-5): read (the defaults with ``saved: false`` before the first save), replace
+the whole object, and the canonical degree list for the form. A save that changes something
+starts the same after-response drain.
 """
 
 import logging
@@ -15,15 +19,18 @@ from typing import Annotated
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Query, Response, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import skills
+from app.core import degrees, skills
 from app.core.auth import Actor, current_actor
 from app.core.config import get_settings
 from app.core.db import get_session
 from app.core.jobs import PRIORITY_QUEUE, drain
 from app.modules.profile import service
 from app.modules.profile.files import MAX_FILE_BYTES
-from app.modules.profile.models import Resume, SkillProfile
+from app.modules.profile.models import Preferences, Resume, SkillProfile
 from app.modules.profile.schemas import (
+    DegreeOut,
+    PreferencesIn,
+    PreferencesOut,
     ProfileSkill,
     ResumeDownload,
     ResumeList,
@@ -251,3 +258,48 @@ async def suggest_skills(
 ) -> list[SkillRef]:
     """Up to 20 vocabulary skills matching ``q`` (prefix matches first), for autocomplete."""
     return [SkillRef(id=s.id, label=s.label) for s in skills.suggest(q, limit=20)]
+
+
+# --------------------------------------------------------------------------- Preferences
+
+
+def _preferences(prefs: Preferences | None) -> PreferencesOut:
+    values = service.preference_values(prefs)
+    if values["cgpa"] is not None:
+        values["cgpa"] = float(values["cgpa"])
+    return PreferencesOut(
+        **values,
+        saved=prefs is not None,
+        updated_at=prefs.updated_at if prefs is not None else None,
+    )
+
+
+@router.get("/preferences", response_model=PreferencesOut, operation_id="getPreferences")
+async def get_preferences(actor: CurrentActor, session: Session) -> PreferencesOut:
+    """The Student's Preferences, or the defaults with ``saved: false`` before the first
+    save."""
+    return _preferences(await service.get_preferences(session, actor.id))
+
+
+@router.put(
+    "/preferences",
+    response_model=PreferencesOut,
+    operation_id="savePreferences",
+    responses={422: {"description": "A field is missing or invalid", **_PROBLEM}},
+)
+async def save_preferences(
+    body: PreferencesIn, actor: CurrentActor, session: Session, background: BackgroundTasks
+) -> PreferencesOut:
+    """Replace the whole Preferences object. Saving the same values again changes
+    nothing."""
+    prefs, changed = await service.save_preferences(session, actor.id, body.model_dump())
+    if changed:
+        await session.commit()
+        background.add_task(drain_priority)
+    return _preferences(prefs)
+
+
+@router.get("/degrees", response_model=list[DegreeOut], operation_id="listDegrees")
+async def list_degrees() -> list[DegreeOut]:
+    """The canonical degrees for the Preferences form, in display order."""
+    return [DegreeOut(id=d.id, label=d.label) for d in degrees.all_degrees()]

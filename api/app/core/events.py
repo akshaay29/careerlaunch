@@ -53,6 +53,14 @@ class SkillProfileChanged(Event):
     owner_id: uuid.UUID
 
 
+@dataclass(frozen=True)
+class PreferencesChanged(Event):
+    """The owner's Preferences changed (FR-5): the first save, or a save whose effective
+    values differ from the stored ones. Collection (Epic 2) and matching (Epic 3) react."""
+
+    owner_id: uuid.UUID
+
+
 Handler = Callable[[AsyncSession, Any], Awaitable[None]]
 
 _subscribers: dict[type[Event], list[Handler]] = {}

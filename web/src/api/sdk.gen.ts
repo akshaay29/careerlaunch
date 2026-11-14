@@ -2,7 +2,7 @@
 
 import { type Client, type ClientMeta, formDataBodySerializer, type Options as Options2, type RequestResult, type TDataShape } from './client';
 import { client } from './client.gen';
-import type { ActivateResumeData, ActivateResumeErrors, ActivateResumeResponses, DeleteResumeData, DeleteResumeErrors, DeleteResumeResponses, EditSkillProfileData, EditSkillProfileErrors, EditSkillProfileResponses, GetAdminMeData, GetAdminMeResponses, GetHealthData, GetHealthResponses, GetMeData, GetMeResponses, GetResumeDownloadData, GetResumeDownloadErrors, GetResumeDownloadResponses, GetSkillProfileData, GetSkillProfileResponses, GrantConsentData, GrantConsentErrors, GrantConsentResponses, ListConsentsData, ListConsentsResponses, ListResumesData, ListResumesErrors, ListResumesResponses, ResetSkillProfileData, ResetSkillProfileResponses, RevokeConsentData, RevokeConsentErrors, RevokeConsentResponses, SuggestSkillsData, SuggestSkillsErrors, SuggestSkillsResponses, UploadResumeData, UploadResumeErrors, UploadResumeResponses } from './types.gen';
+import type { ActivateResumeData, ActivateResumeErrors, ActivateResumeResponses, DeleteResumeData, DeleteResumeErrors, DeleteResumeResponses, EditSkillProfileData, EditSkillProfileErrors, EditSkillProfileResponses, GetAdminMeData, GetAdminMeResponses, GetHealthData, GetHealthResponses, GetMeData, GetMeResponses, GetPreferencesData, GetPreferencesResponses, GetResumeDownloadData, GetResumeDownloadErrors, GetResumeDownloadResponses, GetSkillProfileData, GetSkillProfileResponses, GrantConsentData, GrantConsentErrors, GrantConsentResponses, ListConsentsData, ListConsentsResponses, ListDegreesData, ListDegreesResponses, ListResumesData, ListResumesErrors, ListResumesResponses, ResetSkillProfileData, ResetSkillProfileResponses, RevokeConsentData, RevokeConsentErrors, RevokeConsentResponses, SavePreferencesData, SavePreferencesErrors, SavePreferencesResponses, SuggestSkillsData, SuggestSkillsErrors, SuggestSkillsResponses, UploadResumeData, UploadResumeErrors, UploadResumeResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -174,5 +174,44 @@ export const resetSkillProfile = <ThrowOnError extends boolean = false>(options?
 export const suggestSkills = <ThrowOnError extends boolean = false>(options: Options<SuggestSkillsData, ThrowOnError>): RequestResult<SuggestSkillsResponses, SuggestSkillsErrors, ThrowOnError> => (options.client ?? client).get<SuggestSkillsResponses, SuggestSkillsErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/api/v1/skills',
+    ...options
+});
+
+/**
+ * Get Preferences
+ *
+ * The Student's Preferences, or the defaults with ``saved: false`` before the first
+ * save.
+ */
+export const getPreferences = <ThrowOnError extends boolean = false>(options?: Options<GetPreferencesData, ThrowOnError>): RequestResult<GetPreferencesResponses, unknown, ThrowOnError> => (options?.client ?? client).get<GetPreferencesResponses, unknown, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/v1/preferences',
+    ...options
+});
+
+/**
+ * Save Preferences
+ *
+ * Replace the whole Preferences object. Saving the same values again changes
+ * nothing.
+ */
+export const savePreferences = <ThrowOnError extends boolean = false>(options: Options<SavePreferencesData, ThrowOnError>): RequestResult<SavePreferencesResponses, SavePreferencesErrors, ThrowOnError> => (options.client ?? client).put<SavePreferencesResponses, SavePreferencesErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/v1/preferences',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * List Degrees
+ *
+ * The canonical degrees for the Preferences form, in display order.
+ */
+export const listDegrees = <ThrowOnError extends boolean = false>(options?: Options<ListDegreesData, ThrowOnError>): RequestResult<ListDegreesResponses, unknown, ThrowOnError> => (options?.client ?? client).get<ListDegreesResponses, unknown, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/v1/degrees',
     ...options
 });

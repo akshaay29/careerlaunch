@@ -19,6 +19,12 @@ Skill Profile (FR-4, AD-8):
 * The job stores the extracted set (with ``vocab_version``) and publishes
   ``SkillProfileChanged``. The Student's ``added`` / ``removed`` / ``custom`` edits are kept.
 * Effective skills are ``(extracted | added) - removed``; custom skills are never scored.
+
+Preferences (FR-5):
+
+* One row per owner; no row means :data:`PREFERENCE_DEFAULTS`.
+* A save replaces the whole object. Only when the effective values differ from the stored
+  ones (or nothing was stored yet) is the row written and ``PreferencesChanged`` published.
 """
 
 import asyncio
@@ -27,6 +33,8 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -38,7 +46,7 @@ from app.core.errors import (
     PayloadTooLargeError,
     UnsupportedMediaTypeError,
 )
-from app.core.events import ResumeActivated, SkillProfileChanged, publish
+from app.core.events import PreferencesChanged, ResumeActivated, SkillProfileChanged, publish
 from app.core.jobs import enqueue
 from app.modules.profile import repo
 from app.modules.profile.files import (
@@ -48,7 +56,7 @@ from app.modules.profile.files import (
     storage_path,
 )
 from app.modules.profile.extraction import ExtractionResult
-from app.modules.profile.models import Resume, SkillProfile
+from app.modules.profile.models import Preferences, Resume, SkillProfile
 from app.modules.profile.schemas import MAX_CUSTOM_SKILLS
 from app.modules.profile.tasks import DELETE_STORED_FILES, EXTRACT_RESUME
 from app.ports.file_store import FileStore
@@ -385,3 +393,69 @@ async def reset_skill_profile(
     await repo.save_skill_edits(session, owner_id, added=[], removed=[], custom=[])
     await publish(session, SkillProfileChanged(owner_id=owner_id))
     return await repo.get_skill_profile(session, owner_id), True
+
+
+# --------------------------------------------------------------------------- Preferences
+
+# The defaults a Student has before the first save (the same as the column defaults).
+PREFERENCE_DEFAULTS: dict[str, Any] = {
+    "role_titles": [],
+    "locations": [],
+    "job_types": [],
+    "batch_year": None,
+    "cgpa": None,
+    "degree": None,
+    "degree_other": None,
+    "work_authorisation": None,
+    "threshold": 60,
+    "alert_frequency": "daily",
+    "timezone": "Asia/Kolkata",
+}
+PREFERENCE_FIELDS: tuple[str, ...] = tuple(PREFERENCE_DEFAULTS)
+
+
+def _cgpa(value: float | Decimal | None) -> Decimal | None:
+    """CGPA as stored: numeric(4, 2)."""
+    return None if value is None else Decimal(str(value)).quantize(Decimal("0.01"))
+
+
+def preference_values(prefs: Preferences | None) -> dict[str, Any]:
+    """The effective values of a stored row (the defaults when there is none). ``cgpa`` is
+    a two-decimal ``Decimal``."""
+    if prefs is None:
+        return dict(PREFERENCE_DEFAULTS)
+    values = {name: getattr(prefs, name) for name in PREFERENCE_FIELDS}
+    values["role_titles"] = list(prefs.role_titles)
+    values["locations"] = list(prefs.locations)
+    values["job_types"] = list(prefs.job_types)
+    values["cgpa"] = _cgpa(prefs.cgpa)
+    return values
+
+
+async def get_preferences(session: AsyncSession, owner_id: uuid.UUID) -> Preferences | None:
+    return await repo.get_preferences(session, owner_id)
+
+
+async def save_preferences(
+    session: AsyncSession, owner_id: uuid.UUID, values: dict[str, Any]
+) -> tuple[Preferences, bool]:
+    """Replace the owner's Preferences with ``values`` (already validated and normalised by
+    the API schema; every field present). Returns ``(prefs, changed)``.
+
+    When nothing was stored yet, or the values differ from the stored ones, the row is
+    upserted and ``PreferencesChanged`` is published in the caller's transaction. Otherwise
+    nothing is written or published.
+    """
+    new = {name: values[name] for name in PREFERENCE_FIELDS}
+    new["role_titles"] = list(new["role_titles"])
+    new["locations"] = list(new["locations"])
+    new["job_types"] = list(new["job_types"])
+    new["cgpa"] = _cgpa(new["cgpa"])
+
+    await repo.lock_owner_preferences(session, owner_id)
+    stored = await repo.get_preferences(session, owner_id)
+    if stored is not None and preference_values(stored) == new:
+        return stored, False
+    prefs = await repo.upsert_preferences(session, owner_id, new)
+    await publish(session, PreferencesChanged(owner_id=owner_id))
+    return prefs, True
