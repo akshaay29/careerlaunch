@@ -489,6 +489,154 @@
           }
         }
       }
+    },
+    "/api/v1/skill-profile": {
+      "get": {
+        "tags": [
+          "profile"
+        ],
+        "summary": "Get Skill Profile",
+        "operationId": "getSkillProfile",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProfileOut"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "SupabaseAccessToken": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "profile"
+        ],
+        "summary": "Edit Skill Profile",
+        "description": "Add skills (a vocabulary term becomes a skill, anything else a custom skill), remove\nskills by id, or remove custom skills. Edits are kept when a new Resume is extracted.",
+        "operationId": "editSkillProfile",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillProfileEdit"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProfileOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid terms, ids or too many custom skills",
+            "content": {
+              "application/problem+json": {}
+            }
+          }
+        },
+        "security": [
+          {
+            "SupabaseAccessToken": []
+          }
+        ]
+      }
+    },
+    "/api/v1/skill-profile/reset": {
+      "post": {
+        "tags": [
+          "profile"
+        ],
+        "summary": "Reset Skill Profile",
+        "description": "Reset to extracted: drop every added, removed and custom skill.",
+        "operationId": "resetSkillProfile",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillProfileOut"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "SupabaseAccessToken": []
+          }
+        ]
+      }
+    },
+    "/api/v1/skills": {
+      "get": {
+        "tags": [
+          "profile"
+        ],
+        "summary": "Suggest Skills",
+        "description": "Up to 20 vocabulary skills matching ``q`` (prefix matches first), for autocomplete.",
+        "operationId": "suggestSkills",
+        "security": [
+          {
+            "SupabaseAccessToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 50,
+              "title": "Q"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SkillRef"
+                  },
+                  "title": "Response Suggestskills"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -682,6 +830,34 @@
         "title": "Me",
         "description": "The calling account. ``role`` comes from the database, never from the token."
       },
+      "ProfileSkill": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "extracted",
+              "added"
+            ],
+            "title": "Source"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "source"
+        ],
+        "title": "ProfileSkill",
+        "description": "An effective skill. ``source`` is ``extracted`` when the active Resume mentions it,\nelse ``added`` (the Student added it)."
+      },
       "ResumeDownload": {
         "properties": {
           "url": {
@@ -798,6 +974,161 @@
         ],
         "title": "RightsNotice",
         "description": "The India DPDP Act rights notice, shown with the consent texts (plain text)."
+      },
+      "SkillProfileEdit": {
+        "properties": {
+          "add": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 50,
+            "title": "Add"
+          },
+          "remove": {
+            "items": {
+              "type": "string",
+              "maxLength": 64,
+              "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+            },
+            "type": "array",
+            "maxItems": 500,
+            "title": "Remove"
+          },
+          "remove_custom": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 50,
+            "title": "Remove Custom"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "SkillProfileEdit",
+        "description": "``add``: terms (a vocabulary match becomes a skill, anything else a custom skill);\n``remove``: skill ids; ``remove_custom``: custom terms."
+      },
+      "SkillProfileOut": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "none",
+              "pending",
+              "ready",
+              "unreadable",
+              "failed"
+            ],
+            "title": "Status"
+          },
+          "resume_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resume Id"
+          },
+          "skills": {
+            "items": {
+              "$ref": "#/components/schemas/ProfileSkill"
+            },
+            "type": "array",
+            "title": "Skills"
+          },
+          "removed": {
+            "items": {
+              "$ref": "#/components/schemas/SkillRef"
+            },
+            "type": "array",
+            "title": "Removed"
+          },
+          "custom": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Custom"
+          },
+          "education": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Education"
+          },
+          "experience": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Experience"
+          },
+          "vocab_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vocab Version"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "has_edits": {
+            "type": "boolean",
+            "title": "Has Edits"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "resume_id",
+          "skills",
+          "removed",
+          "custom",
+          "education",
+          "experience",
+          "vocab_version",
+          "message",
+          "has_edits"
+        ],
+        "title": "SkillProfileOut",
+        "description": "The Student's Skill Profile. ``status`` is ``none`` before any Resume was extracted.\n``message`` is set when the Resume could not be read. ``custom``, ``education`` and\n``experience`` are untrusted text: render them as plain text. ``resume_id`` is null when\nthe source Resume was deleted (the profile is kept)."
+      },
+      "SkillRef": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "label"
+        ],
+        "title": "SkillRef"
       },
       "ValidationError": {
         "properties": {

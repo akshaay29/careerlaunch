@@ -89,11 +89,13 @@ def _rows(url: str, owner_id: uuid.UUID) -> list[tuple]:
         ).fetchall()
 
 
-def _jobs(url: str) -> list[tuple]:
+def _jobs(url: str, task: str = "profile.delete_stored_files") -> list[tuple]:
+    """Jobs of ``task`` (activations also enqueue ``profile.extract_resume``, Story 1.6)."""
     with psycopg.connect(to_libpq_url(url)) as conn:
         return conn.execute(
             "SELECT task_name, queueing_lock, status, args FROM app.procrastinate_jobs "
-            "ORDER BY id"
+            "WHERE task_name = %s ORDER BY id",
+            (task,),
         ).fetchall()
 
 
@@ -598,7 +600,10 @@ async def test_delete_job_is_idempotent_and_survives_storage_outage(
     fake_store.fail_delete = False
     with psycopg.connect(to_libpq_url(migrated_db), autocommit=True) as conn:
         conn.execute("SET search_path TO app")  # Procrastinate's triggers expect it
-        conn.execute("UPDATE procrastinate_jobs SET scheduled_at = now()")
+        conn.execute(
+            "UPDATE procrastinate_jobs SET scheduled_at = now() "
+            "WHERE task_name = 'profile.delete_stored_files'"
+        )
     await drain(queues=("priority",))
     assert fake_store.paths_under(f"{owner}/") == []
     assert _jobs(migrated_db)[0][2] == "succeeded"

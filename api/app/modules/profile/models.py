@@ -1,9 +1,11 @@
-"""profile.models: ``resumes`` (DDL in migration 0006_resumes)."""
+"""profile.models: ``resumes`` (DDL in 0006_resumes) and ``skill_profiles`` (0007)."""
 
 import uuid
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import Boolean, DateTime, Integer, Text, func
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -25,5 +27,30 @@ class Resume(Base):
     sha256: Mapped[str] = mapped_column(Text)
     is_active: Mapped[bool] = mapped_column(Boolean, server_default="false")
     created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class SkillProfile(Base):
+    """One Skill Profile per owner. Effective skills are
+    ``(extracted_skills | added_skills) - removed_skills``; ``custom_skills`` (terms outside
+    the vocabulary) are stored and shown but never scored. ``status`` is None when the row
+    exists only because of manual edits."""
+
+    __tablename__ = "skill_profiles"
+
+    # FKs (accounts CASCADE, resumes SET NULL) are declared in the migration.
+    owner_id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
+    resume_id: Mapped[uuid.UUID | None] = mapped_column()
+    status: Mapped[str | None] = mapped_column(Text)
+    extracted_skills: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}")
+    vocab_version: Mapped[str | None] = mapped_column(Text)
+    added_skills: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}")
+    removed_skills: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}")
+    custom_skills: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}")
+    education: Mapped[list[Any]] = mapped_column(JSONB, server_default="[]")
+    experience: Mapped[list[Any]] = mapped_column(JSONB, server_default="[]")
+    extracted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

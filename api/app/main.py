@@ -30,6 +30,7 @@ from app.modules.accounts.router import router as accounts_router
 from app.modules.accounts.service import get_or_provision
 from app.modules.listings.router import router as listings_router
 from app.modules.matching.router import router as matching_router
+from app.modules.profile import events as profile_events
 from app.modules.profile.files import MAX_FILE_BYTES
 from app.modules.profile.router import router as profile_router
 from app.modules.profile.service import TOO_LARGE_DETAIL
@@ -143,6 +144,8 @@ def create_app(
     # The role is loaded by accounts.service, injected here so core never imports modules.
     install_auth(app, account_loader=get_or_provision, jwks=jwks)
     install_files(app, file_store)
+    # Domain-event subscribers, registered explicitly at startup (idempotent).
+    profile_events.register()
 
     # Admin and public first: routes match in mount order, so a token-only route such as
     # /{id}/... can never shadow /api/v1/admin/* or /api/v1/public/*.

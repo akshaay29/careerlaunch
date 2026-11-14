@@ -2,7 +2,7 @@
 
 import { type Client, type ClientMeta, formDataBodySerializer, type Options as Options2, type RequestResult, type TDataShape } from './client';
 import { client } from './client.gen';
-import type { ActivateResumeData, ActivateResumeErrors, ActivateResumeResponses, DeleteResumeData, DeleteResumeErrors, DeleteResumeResponses, GetAdminMeData, GetAdminMeResponses, GetHealthData, GetHealthResponses, GetMeData, GetMeResponses, GetResumeDownloadData, GetResumeDownloadErrors, GetResumeDownloadResponses, GrantConsentData, GrantConsentErrors, GrantConsentResponses, ListConsentsData, ListConsentsResponses, ListResumesData, ListResumesErrors, ListResumesResponses, RevokeConsentData, RevokeConsentErrors, RevokeConsentResponses, UploadResumeData, UploadResumeErrors, UploadResumeResponses } from './types.gen';
+import type { ActivateResumeData, ActivateResumeErrors, ActivateResumeResponses, DeleteResumeData, DeleteResumeErrors, DeleteResumeResponses, EditSkillProfileData, EditSkillProfileErrors, EditSkillProfileResponses, GetAdminMeData, GetAdminMeResponses, GetHealthData, GetHealthResponses, GetMeData, GetMeResponses, GetResumeDownloadData, GetResumeDownloadErrors, GetResumeDownloadResponses, GetSkillProfileData, GetSkillProfileResponses, GrantConsentData, GrantConsentErrors, GrantConsentResponses, ListConsentsData, ListConsentsResponses, ListResumesData, ListResumesErrors, ListResumesResponses, ResetSkillProfileData, ResetSkillProfileResponses, RevokeConsentData, RevokeConsentErrors, RevokeConsentResponses, SuggestSkillsData, SuggestSkillsErrors, SuggestSkillsResponses, UploadResumeData, UploadResumeErrors, UploadResumeResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -127,5 +127,52 @@ export const getResumeDownload = <ThrowOnError extends boolean = false>(options:
 export const deleteResume = <ThrowOnError extends boolean = false>(options: Options<DeleteResumeData, ThrowOnError>): RequestResult<DeleteResumeResponses, DeleteResumeErrors, ThrowOnError> => (options.client ?? client).delete<DeleteResumeResponses, DeleteResumeErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/api/v1/resumes/{resume_id}',
+    ...options
+});
+
+/**
+ * Get Skill Profile
+ */
+export const getSkillProfile = <ThrowOnError extends boolean = false>(options?: Options<GetSkillProfileData, ThrowOnError>): RequestResult<GetSkillProfileResponses, unknown, ThrowOnError> => (options?.client ?? client).get<GetSkillProfileResponses, unknown, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/v1/skill-profile',
+    ...options
+});
+
+/**
+ * Edit Skill Profile
+ *
+ * Add skills (a vocabulary term becomes a skill, anything else a custom skill), remove
+ * skills by id, or remove custom skills. Edits are kept when a new Resume is extracted.
+ */
+export const editSkillProfile = <ThrowOnError extends boolean = false>(options: Options<EditSkillProfileData, ThrowOnError>): RequestResult<EditSkillProfileResponses, EditSkillProfileErrors, ThrowOnError> => (options.client ?? client).patch<EditSkillProfileResponses, EditSkillProfileErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/v1/skill-profile',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Reset Skill Profile
+ *
+ * Reset to extracted: drop every added, removed and custom skill.
+ */
+export const resetSkillProfile = <ThrowOnError extends boolean = false>(options?: Options<ResetSkillProfileData, ThrowOnError>): RequestResult<ResetSkillProfileResponses, unknown, ThrowOnError> => (options?.client ?? client).post<ResetSkillProfileResponses, unknown, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/v1/skill-profile/reset',
+    ...options
+});
+
+/**
+ * Suggest Skills
+ *
+ * Up to 20 vocabulary skills matching ``q`` (prefix matches first), for autocomplete.
+ */
+export const suggestSkills = <ThrowOnError extends boolean = false>(options: Options<SuggestSkillsData, ThrowOnError>): RequestResult<SuggestSkillsResponses, SuggestSkillsErrors, ThrowOnError> => (options.client ?? client).get<SuggestSkillsResponses, SuggestSkillsErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/v1/skills',
     ...options
 });

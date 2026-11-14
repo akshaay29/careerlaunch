@@ -128,6 +128,27 @@ export type Me = {
 };
 
 /**
+ * ProfileSkill
+ *
+ * An effective skill. ``source`` is ``extracted`` when the active Resume mentions it,
+ * else ``added`` (the Student added it).
+ */
+export type ProfileSkill = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Label
+     */
+    label: string;
+    /**
+     * Source
+     */
+    source: 'extracted' | 'added';
+};
+
+/**
  * ResumeDownload
  *
  * A signed URL that downloads the file as an attachment; it stops working at
@@ -206,6 +227,92 @@ export type RightsNotice = {
      * Body
      */
     body: Array<string>;
+};
+
+/**
+ * SkillProfileEdit
+ *
+ * ``add``: terms (a vocabulary match becomes a skill, anything else a custom skill);
+ * ``remove``: skill ids; ``remove_custom``: custom terms.
+ */
+export type SkillProfileEdit = {
+    /**
+     * Add
+     */
+    add?: Array<string>;
+    /**
+     * Remove
+     */
+    remove?: Array<string>;
+    /**
+     * Remove Custom
+     */
+    remove_custom?: Array<string>;
+};
+
+/**
+ * SkillProfileOut
+ *
+ * The Student's Skill Profile. ``status`` is ``none`` before any Resume was extracted.
+ * ``message`` is set when the Resume could not be read. ``custom``, ``education`` and
+ * ``experience`` are untrusted text: render them as plain text. ``resume_id`` is null when
+ * the source Resume was deleted (the profile is kept).
+ */
+export type SkillProfileOut = {
+    /**
+     * Status
+     */
+    status: 'none' | 'pending' | 'ready' | 'unreadable' | 'failed';
+    /**
+     * Resume Id
+     */
+    resume_id: string | null;
+    /**
+     * Skills
+     */
+    skills: Array<ProfileSkill>;
+    /**
+     * Removed
+     */
+    removed: Array<SkillRef>;
+    /**
+     * Custom
+     */
+    custom: Array<string>;
+    /**
+     * Education
+     */
+    education: Array<string>;
+    /**
+     * Experience
+     */
+    experience: Array<string>;
+    /**
+     * Vocab Version
+     */
+    vocab_version: string | null;
+    /**
+     * Message
+     */
+    message: string | null;
+    /**
+     * Has Edits
+     */
+    has_edits: boolean;
+};
+
+/**
+ * SkillRef
+ */
+export type SkillRef = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Label
+     */
+    label: string;
 };
 
 /**
@@ -530,3 +637,90 @@ export type DeleteResumeResponses = {
 };
 
 export type DeleteResumeResponse = DeleteResumeResponses[keyof DeleteResumeResponses];
+
+export type GetSkillProfileData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/skill-profile';
+};
+
+export type GetSkillProfileResponses = {
+    /**
+     * Successful Response
+     */
+    200: SkillProfileOut;
+};
+
+export type GetSkillProfileResponse = GetSkillProfileResponses[keyof GetSkillProfileResponses];
+
+export type EditSkillProfileData = {
+    body: SkillProfileEdit;
+    path?: never;
+    query?: never;
+    url: '/api/v1/skill-profile';
+};
+
+export type EditSkillProfileErrors = {
+    /**
+     * Invalid terms, ids or too many custom skills
+     */
+    422: unknown;
+};
+
+export type EditSkillProfileResponses = {
+    /**
+     * Successful Response
+     */
+    200: SkillProfileOut;
+};
+
+export type EditSkillProfileResponse = EditSkillProfileResponses[keyof EditSkillProfileResponses];
+
+export type ResetSkillProfileData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/skill-profile/reset';
+};
+
+export type ResetSkillProfileResponses = {
+    /**
+     * Successful Response
+     */
+    200: SkillProfileOut;
+};
+
+export type ResetSkillProfileResponse = ResetSkillProfileResponses[keyof ResetSkillProfileResponses];
+
+export type SuggestSkillsData = {
+    body?: never;
+    path?: never;
+    query: {
+        /**
+         * Q
+         */
+        q: string;
+    };
+    url: '/api/v1/skills';
+};
+
+export type SuggestSkillsErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type SuggestSkillsError = SuggestSkillsErrors[keyof SuggestSkillsErrors];
+
+export type SuggestSkillsResponses = {
+    /**
+     * Response Suggestskills
+     *
+     * Successful Response
+     */
+    200: Array<SkillRef>;
+};
+
+export type SuggestSkillsResponse = SuggestSkillsResponses[keyof SuggestSkillsResponses];

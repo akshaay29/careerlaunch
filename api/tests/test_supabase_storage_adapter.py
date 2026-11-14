@@ -108,6 +108,35 @@ async def test_delete_404_is_not_an_error_but_500_is() -> None:
         await store.delete([PATH])
 
 
+async def test_get_downloads_the_object_with_the_service_key() -> None:
+    store, rec = store_with(lambda r: httpx.Response(200, content=b"%PDF-1.7 bytes"))
+    assert await store.get(PATH) == b"%PDF-1.7 bytes"
+    (req,) = rec.requests
+    assert req.method == "GET"
+    assert str(req.url) == f"{BASE}/object/authenticated/private/{PATH}"
+    assert_auth(req)
+
+
+@pytest.mark.parametrize("status", [400, 404, 500])
+async def test_get_error_becomes_file_store_error(status: int) -> None:
+    store, _ = store_with(lambda r: httpx.Response(status, json={"error": "x"}))
+    with pytest.raises(FileStoreError, match=f"HTTP {status}"):
+        await store.get(PATH)
+
+
+async def test_get_transport_error_and_unsafe_path() -> None:
+    def boom(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("slow", request=request)
+
+    store, _ = store_with(boom)
+    with pytest.raises(FileStoreError):
+        await store.get(PATH)
+    store, rec = store_with(lambda r: httpx.Response(200))
+    with pytest.raises(ValueError):
+        await store.get("a/../b")
+    assert rec.requests == []
+
+
 async def test_signed_url_is_short_lived_attachment() -> None:
     token_path = f"/object/sign/private/{PATH}?token=abc.def"
     store, rec = store_with(lambda r: httpx.Response(200, json={"signedURL": token_path}))

@@ -1,12 +1,15 @@
-"""profile.repo: SQL for the ``resumes`` table only (AD-2). Every query is owner-scoped."""
+"""profile.repo: SQL for the ``resumes`` and ``skill_profiles`` tables only (AD-2). Every
+query is owner-scoped."""
 
 import uuid
+from datetime import datetime
+from typing import Any
 
 from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.profile.models import Resume
+from app.modules.profile.models import Resume, SkillProfile
 
 
 async def lock_owner_resumes(session: AsyncSession, owner_id: uuid.UUID) -> None:
@@ -117,3 +120,103 @@ async def delete_resume(
         .execution_options(synchronize_session=False)
     )
     return result.scalar_one_or_none()
+
+
+# --------------------------------------------------------------------------- skill_profiles
+
+
+async def lock_owner_skill_profile(session: AsyncSession, owner_id: uuid.UUID) -> None:
+    """Serialise Skill Profile edits of one owner until the transaction ends (the row may not
+    exist yet, so a row lock is not enough)."""
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+        {"key": f"skill_profiles:{owner_id}"},
+    )
+
+
+async def get_skill_profile(session: AsyncSession, owner_id: uuid.UUID) -> SkillProfile | None:
+    result = await session.execute(
+        select(SkillProfile)
+        .where(SkillProfile.owner_id == owner_id)
+        .execution_options(populate_existing=True)
+    )
+    return result.scalar_one_or_none()
+
+
+async def mark_skill_profile_pending(
+    session: AsyncSession, owner_id: uuid.UUID, resume_id: uuid.UUID
+) -> None:
+    """Create the row (or point the existing one at ``resume_id``) with status ``pending``.
+    The extracted set and the Student's edits are kept until the new extraction lands."""
+    stmt = insert(SkillProfile).values(owner_id=owner_id, resume_id=resume_id, status="pending")
+    stmt = stmt.on_conflict_do_update(
+        index_elements=[SkillProfile.owner_id],
+        set_={"resume_id": resume_id, "status": "pending", "updated_at": func.now()},
+    )
+    await session.execute(stmt)
+
+
+async def settle_pending_skill_profile(
+    session: AsyncSession, owner_id: uuid.UUID, resume_id: uuid.UUID
+) -> None:
+    """The source Resume of a PENDING profile is being deleted: its extraction will never
+    land, so drop back to the no-extraction state (status NULL). Edits are kept."""
+    await session.execute(
+        update(SkillProfile)
+        .where(
+            SkillProfile.owner_id == owner_id,
+            SkillProfile.resume_id == resume_id,
+            SkillProfile.status == "pending",
+        )
+        .values(status=None, updated_at=func.now())
+        .execution_options(synchronize_session=False)
+    )
+
+
+async def store_extraction(
+    session: AsyncSession,
+    owner_id: uuid.UUID,
+    resume_id: uuid.UUID,
+    *,
+    status: str,
+    extracted_skills: list[str],
+    vocab_version: str,
+    education: list[Any],
+    experience: list[Any],
+    extracted_at: datetime,
+) -> bool:
+    """Store an extraction result, only while the row still points at ``resume_id``.
+    Returns False (nothing written) when it no longer does."""
+    result = await session.execute(
+        update(SkillProfile)
+        .where(SkillProfile.owner_id == owner_id, SkillProfile.resume_id == resume_id)
+        .values(
+            status=status,
+            extracted_skills=extracted_skills,
+            vocab_version=vocab_version,
+            education=education,
+            experience=experience,
+            extracted_at=extracted_at,
+            updated_at=func.now(),
+        )
+        .returning(SkillProfile.owner_id)
+        .execution_options(synchronize_session=False)
+    )
+    return result.scalar_one_or_none() is not None
+
+
+async def save_skill_edits(
+    session: AsyncSession,
+    owner_id: uuid.UUID,
+    *,
+    added: list[str],
+    removed: list[str],
+    custom: list[str],
+) -> None:
+    """Write the Student's edit sets, creating the row (no status) when there is none."""
+    values = {"added_skills": added, "removed_skills": removed, "custom_skills": custom}
+    stmt = insert(SkillProfile).values(owner_id=owner_id, **values)
+    stmt = stmt.on_conflict_do_update(
+        index_elements=[SkillProfile.owner_id], set_={**values, "updated_at": func.now()}
+    )
+    await session.execute(stmt)
