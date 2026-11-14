@@ -330,6 +330,49 @@ Supabase dashboard → Authentication:
   running it again refreshes the same rows. It runs only with `ENVIRONMENT` `local` or `ci`.
   Then sign in and open `/listings`.
 
+## Provider Key (FR-28, AD-6, AD-12, Story 2.2)
+
+- **What it is:** each Student's own scoped Apify token. Collection (Story 2.3) runs under it,
+  billed to the Student's Apify account. Settings page: `/settings/provider-key`.
+- **API:** `GET /api/v1/provider-key` returns `{provider, has_key, last4, validated_at,
+  needs_reentry}` (`needs_reentry`: the key was sealed with a master-key version that is no
+  longer configured, so the Student must enter it again). `PUT` takes `{token}` (trimmed,
+  then 8-200 printable ASCII characters with no whitespace, else 422 on `token`) and, in
+  order: requires `provider_runs` consent (403 `consent-required`); validates the token with
+  `GET /v2/users/me` at Apify with NO database transaction open (422 on `token` if rejected,
+  503 `provider-unavailable` if Apify cannot answer); then, under the account lock, re-checks
+  consent, encrypts and upserts it (a replacement keeps the row id) and publishes
+  `ProviderKeyChanged`. `DELETE` removes it, pauses the owner's collection schedules
+  (`accounts.COLLECTION_SCHEDULE_KINDS`, even when no key exists) and, if a key was removed,
+  publishes `ProviderKeyChanged(removed=True)`; it is idempotent. Withdrawing
+  `provider_runs` consent also pauses those schedules (the key is kept). Responses never
+  contain the token or ciphertext.
+- **Storage:** `app.provider_credentials` holds AES-256-GCM ciphertext from `core.crypto`
+  (blob `v<version>:<nonce><ciphertext>`, version 1-32767, AAD
+  `provider_credentials:<id>:<owner_id>`), the master-key version, `last4` and the Apify user
+  id. Only `accounts.service.decrypt_credential` reads the plaintext, for the callers of the
+  Apify adapter (Story 2.3); a blob that does not decrypt is a 409 `provider-key-unreadable`.
+- **Logs:** the JSON formatter redacts `apify_api_...` and `Bearer <value>` anywhere (message,
+  fields, traceback) and any `extra` field whose name contains `token`, `authorization`,
+  `api_key`, `apikey`, `secret`, `password`, `master_key` or `ciphertext`.
+- **`APIFY_API_BASE`** must be `https://` unless `ENVIRONMENT` is `local` or `ci`.
+
+### Credential master key (`CREDENTIALS_MASTER_KEYS`)
+
+- **Generate** one 32-byte key (version 1):
+  `python -c "import os,base64;print('1:'+base64.b64encode(os.urandom(32)).decode())"`
+- **Where it lives:** the Render env var `CREDENTIALS_MASTER_KEYS` (`sync: false`, set in the
+  dashboard) plus an offline copy in the owner's password manager. Never in the repo, the
+  database, GitHub or Vercel. Locally, put a separately generated key in `.env`. Losing every
+  copy makes all stored Provider Keys unreadable (Students must add them again).
+- **Unset:** the api still starts; saving (or decrypting) a key fails with 503
+  `credentials-unavailable`. A malformed value fails startup (the error never shows the key).
+- **Rotate:** generate a new key with the next version and set
+  `CREDENTIALS_MASTER_KEYS=1:<old>,2:<new>`. New saves use the highest version; existing rows
+  still decrypt with the version in their blob (`provider_credentials.key_version`). Drop the
+  old version only after no row has `key_version` = 1 (a re-encryption job is not built yet;
+  Students replacing their key, or a one-off script using `decrypt`/`encrypt`, moves rows).
+
 ## CI (`.github/workflows/ci.yml`)
 
 On every push and PR: Postgres 17 service + Supabase roles SQL → `alembic upgrade head` →

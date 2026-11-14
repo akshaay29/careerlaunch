@@ -61,3 +61,9 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-2-1-shared-listing-pool-source-adapter-and-browsing.md`
   summary: Add component tests for `ListingBrowser` / `ListingDetail` (signed-out, not-found, load-more merge, error retry) once `web` has a harness.
   evidence: Only `lib/listings.ts` helpers are tested.
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-2-add-my-apify-provider-key.md`
+  summary: Story 2.3 must decide how re-saving a Provider Key resumes the `listings.collect` schedules that deleting it paused, without overriding pauses from caps or provider status (2.4).
+  evidence: `delete_credential` pauses the schedules, and `store_credential` never resumes them.
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-2-add-my-apify-provider-key.md`
+  summary: Add component tests for the `ConsentPanel` `next` return and `ProviderKeyManager` (replace, cancel, delete dialog, consent round trip) once `web` has a harness.
+  evidence: Only the `lib/provider-key.ts` helpers are tested.

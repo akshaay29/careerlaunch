@@ -13,6 +13,7 @@ from app.core.config import Settings
 from app.main import create_app
 from app.ports import auth_admin as auth_admin_port
 from app.ports import file_store as file_store_port
+from app.ports import provider_runner as provider_runner_port
 from app.ports.auth_admin import AuthAdmin, AuthAdminError, LazyAuthAdmin, get_auth_admin
 from app.ports.file_store import LazyFileStore
 from tests.fakes.auth_admin import FakeAuthAdmin
@@ -125,11 +126,13 @@ async def test_lazy_file_store_forwards_delete_prefix_and_its_count() -> None:
 def restore_ports() -> Iterator[None]:
     """create_app installs process-wide ports; put back whatever was installed before."""
     saved_admin, saved_store = auth_admin_port._installed, file_store_port._installed
+    saved_runner = provider_runner_port._installed
     try:
         yield
     finally:
         auth_admin_port._installed = saved_admin
         file_store_port._installed = saved_store
+        provider_runner_port._installed = saved_runner
 
 
 @pytest.mark.usefixtures("restore_ports")

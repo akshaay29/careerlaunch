@@ -20,8 +20,11 @@ from app.modules.accounts.schemas import (
     ConsentOverview,
     ConsentStatus,
     Me,
+    ProviderKeyInput,
+    ProviderKeyMeta,
     RightsNotice,
 )
+from app.ports.provider_runner import ProviderRunner, provider_runner_dependency
 
 router = APIRouter(tags=["accounts"])
 admin_router = APIRouter(tags=["admin"])
@@ -128,4 +131,65 @@ async def grant_consent(
 async def revoke_consent(purpose: ConsentPurpose, actor: CurrentActor, session: Session) -> Response:
     if await service.revoke_consent(session, actor.id, purpose):
         await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# --------------------------------------------------------------------------- provider key (AD-6)
+
+Runner = Annotated[ProviderRunner, Depends(provider_runner_dependency)]
+
+
+def _key_meta(meta: service.CredentialMeta) -> ProviderKeyMeta:
+    return ProviderKeyMeta.model_validate(
+        {
+            "provider": meta.provider,
+            "has_key": meta.has_key,
+            "last4": meta.last4,
+            "validated_at": meta.validated_at,
+            "needs_reentry": meta.needs_reentry,
+        }
+    )
+
+
+@router.get("/provider-key", response_model=ProviderKeyMeta, operation_id="getProviderKey")
+async def get_provider_key(actor: CurrentActor, session: Session) -> ProviderKeyMeta:
+    return _key_meta(await service.get_credential_meta(session, actor.id))
+
+
+@router.put(
+    "/provider-key",
+    response_model=ProviderKeyMeta,
+    operation_id="putProviderKey",
+    responses={
+        403: {"description": "provider_runs consent is required", **_PROBLEM},
+        422: {"description": "Apify did not accept the token", **_PROBLEM},
+        503: {"description": "Apify or credential storage is unavailable", **_PROBLEM},
+    },
+)
+async def put_provider_key(
+    body: ProviderKeyInput, actor: CurrentActor, session: Session, runner: Runner
+) -> ProviderKeyMeta:
+    """Validate the Apify token with Apify, then store it encrypted (replacing any existing
+    key). The token is never returned. Apify is called with no database transaction open."""
+    await service.require_consent(session, actor.id, ConsentPurpose.PROVIDER_RUNS)
+    service.ensure_credentials_available()
+    # End the read transaction: no connection is held while Apify answers.
+    await session.rollback()
+    account = await service.validate_provider_key(runner, body.token)
+    # Short store transaction; store_credential re-checks consent under the account lock.
+    meta = await service.store_credential(session, actor.id, body.token, account.user_id)
+    await session.commit()
+    return _key_meta(meta)
+
+
+@router.delete(
+    "/provider-key",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    operation_id="deleteProviderKey",
+)
+async def delete_provider_key(actor: CurrentActor, session: Session) -> Response:
+    """Delete my Provider Key and pause my collection. Idempotent."""
+    await service.delete_credential(session, actor.id)
+    await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

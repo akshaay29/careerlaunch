@@ -237,6 +237,103 @@
         }
       }
     },
+    "/api/v1/provider-key": {
+      "get": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Get Provider Key",
+        "operationId": "getProviderKey",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderKeyMeta"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "SupabaseAccessToken": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Put Provider Key",
+        "description": "Validate the Apify token with Apify, then store it encrypted (replacing any existing\nkey). The token is never returned. Apify is called with no database transaction open.",
+        "operationId": "putProviderKey",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProviderKeyInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderKeyMeta"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "provider_runs consent is required",
+            "content": {
+              "application/problem+json": {}
+            }
+          },
+          "422": {
+            "description": "Apify did not accept the token",
+            "content": {
+              "application/problem+json": {}
+            }
+          },
+          "503": {
+            "description": "Apify or credential storage is unavailable",
+            "content": {
+              "application/problem+json": {}
+            }
+          }
+        },
+        "security": [
+          {
+            "SupabaseAccessToken": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Delete Provider Key",
+        "description": "Delete my Provider Key and pause my collection. Idempotent.",
+        "operationId": "deleteProviderKey",
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "SupabaseAccessToken": []
+          }
+        ]
+      }
+    },
     "/api/v1/resumes": {
       "post": {
         "tags": [
@@ -1900,6 +1997,74 @@
         ],
         "title": "ProfileSkill",
         "description": "An effective skill. ``source`` is ``extracted`` when the active Resume mentions it,\nelse ``added`` (the Student added it)."
+      },
+      "ProviderKeyInput": {
+        "properties": {
+          "token": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 8,
+            "format": "password",
+            "title": "Token",
+            "writeOnly": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "token"
+        ],
+        "title": "ProviderKeyInput",
+        "description": "A Provider Key to validate and store. Trimmed, then 8 to 200 printable ASCII\ncharacters with no whitespace. Write-only: it is never returned, logged or echoed in a\nvalidation error."
+      },
+      "ProviderKeyMeta": {
+        "properties": {
+          "provider": {
+            "type": "string",
+            "const": "apify",
+            "title": "Provider"
+          },
+          "has_key": {
+            "type": "boolean",
+            "title": "Has Key"
+          },
+          "last4": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last4"
+          },
+          "validated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Validated At"
+          },
+          "needs_reentry": {
+            "type": "boolean",
+            "title": "Needs Reentry"
+          }
+        },
+        "type": "object",
+        "required": [
+          "provider",
+          "has_key",
+          "last4",
+          "validated_at",
+          "needs_reentry"
+        ],
+        "title": "ProviderKeyMeta",
+        "description": "What the Student sees about their Provider Key: whether one is stored, its last four\ncharacters and when it was last validated. Never the token."
       },
       "ResumeDownload": {
         "properties": {

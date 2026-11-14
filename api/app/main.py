@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from app.adapters import supabase_auth, supabase_storage
+from app.adapters import apify, supabase_auth, supabase_storage
 from app.core.auth import JwksCache, current_actor, install_auth, require_admin
 from app.core.config import Settings, get_settings
 from app.core.db import dispose_engine
@@ -25,6 +25,7 @@ from app.core.errors import install_error_handlers
 from app.core.limits import BodySizeLimitMiddleware
 from app.core.internal import router as internal_router
 from app.core.logging import REQUEST_ID_HEADER, RequestIdMiddleware, configure_logging
+from app.modules.accounts import events as accounts_events
 from app.modules.accounts.router import admin_router as accounts_admin_router
 from app.modules.accounts.router import router as accounts_router
 from app.modules.accounts.service import get_or_provision
@@ -37,6 +38,11 @@ from app.modules.profile.service import DOCUMENT_TOO_LARGE_DETAIL, TOO_LARGE_DET
 from app.modules.tracker.router import router as tracker_router
 from app.ports.auth_admin import AuthAdmin, LazyAuthAdmin, install_auth_admin
 from app.ports.file_store import FileStore, LazyFileStore, install_file_store
+from app.ports.provider_runner import (
+    LazyProviderRunner,
+    ProviderRunner,
+    install_provider_runner,
+)
 
 API_V1 = "/api/v1"
 API_ADMIN = f"{API_V1}/admin"
@@ -118,11 +124,25 @@ def install_auth_admin_port(app: FastAPI, admin: AuthAdmin | None = None) -> Aut
     return admin
 
 
+def install_provider_runner_port(
+    app: FastAPI, runner: ProviderRunner | None = None
+) -> ProviderRunner:
+    """Wire the ProviderRunner port (``app.state.provider_runner``, process-wide for tasks),
+    like :func:`install_files`: without an injected one, the Apify adapter is built from
+    Settings on first use."""
+    if runner is None:
+        runner = LazyProviderRunner(apify.from_settings)
+    app.state.provider_runner = runner
+    install_provider_runner(runner)
+    return runner
+
+
 def create_app(
     settings: Settings | None = None,
     jwks: JwksCache | None = None,
     file_store: FileStore | None = None,
     auth_admin: AuthAdmin | None = None,
+    provider_runner: ProviderRunner | None = None,
 ) -> FastAPI:
     settings = settings or get_settings()
     configure_logging(settings.log_level)
@@ -162,7 +182,9 @@ def create_app(
     install_auth(app, account_loader=get_or_provision, jwks=jwks)
     install_files(app, file_store)
     install_auth_admin_port(app, auth_admin)
+    install_provider_runner_port(app, provider_runner)
     # Domain-event subscribers, registered explicitly at startup (idempotent).
+    accounts_events.register()
     profile_events.register()
 
     # Admin and public first: routes match in mount order, so a token-only route such as

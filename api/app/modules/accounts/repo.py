@@ -1,5 +1,5 @@
-"""accounts.repo: SQL for the ``accounts``, ``consents`` and ``deleted_accounts`` tables only
-(AD-2)."""
+"""accounts.repo: SQL for the ``accounts``, ``consents``, ``deleted_accounts`` and
+``provider_credentials`` tables only (AD-2)."""
 
 import uuid
 from datetime import timedelta
@@ -9,7 +9,8 @@ from sqlalchemy import Text, Uuid, delete, exists, func, literal, or_, select, u
 from sqlalchemy.dialects.postgresql import distinct_on, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.accounts.models import Account, Consent, DeletedAccount
+from app.core.errors import ConflictError
+from app.modules.accounts.models import Account, Consent, DeletedAccount, ProviderCredential
 
 
 async def get(session: AsyncSession, account_id: uuid.UUID) -> Account | None:
@@ -228,3 +229,69 @@ async def has_active_consent(
         .limit(1)
     )
     return result.scalar_one_or_none() is not None
+
+
+# --------------------------------------------------------------------------- provider keys
+
+
+async def get_credential(
+    session: AsyncSession, owner_id: uuid.UUID, provider: str
+) -> ProviderCredential | None:
+    result = await session.execute(
+        select(ProviderCredential)
+        .where(ProviderCredential.owner_id == owner_id, ProviderCredential.provider == provider)
+        .execution_options(populate_existing=True)
+    )
+    return result.scalar_one_or_none()
+
+
+async def upsert_credential(
+    session: AsyncSession,
+    *,
+    credential_id: uuid.UUID,
+    owner_id: uuid.UUID,
+    provider: str,
+    ciphertext: bytes,
+    key_version: int,
+    last4: str,
+    provider_user_id: str | None,
+) -> ProviderCredential:
+    """Insert the owner's key for ``provider`` or replace it in place. A replacement keeps the
+    existing row id (the AAD binds it), so the caller must pass that id when a row exists;
+    callers serialise per owner by locking the account row first."""
+    values = {
+        "ciphertext": ciphertext,
+        "key_version": key_version,
+        "last4": last4,
+        "provider_user_id": provider_user_id,
+        "validated_at": func.now(),
+        "updated_at": func.now(),
+    }
+    stmt = (
+        insert(ProviderCredential)
+        .values(id=credential_id, owner_id=owner_id, provider=provider, **values)
+        .on_conflict_do_update(
+            constraint="provider_credentials_owner_provider_key",
+            set_=values,
+            where=ProviderCredential.id == credential_id,
+        )
+        .returning(ProviderCredential)
+        .execution_options(populate_existing=True)
+    )
+    row = (await session.execute(stmt)).scalar_one_or_none()
+    if row is None:
+        # The row on conflict has another id: its AAD would not match this ciphertext.
+        raise ConflictError("Your Apify token was changed at the same time. Try again.")
+    return row
+
+
+async def delete_credential(
+    session: AsyncSession, owner_id: uuid.UUID, provider: str
+) -> uuid.UUID | None:
+    result = await session.execute(
+        delete(ProviderCredential)
+        .where(ProviderCredential.owner_id == owner_id, ProviderCredential.provider == provider)
+        .returning(ProviderCredential.id)
+        .execution_options(synchronize_session=False)
+    )
+    return result.scalar_one_or_none()
