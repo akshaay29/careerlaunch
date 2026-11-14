@@ -6,18 +6,24 @@ it to ``alembic upgrade head`` once per session.
 """
 
 import asyncio
+import json
 import sys
+import time
+import uuid
 from collections.abc import AsyncIterator, Iterator, Mapping
 from pathlib import Path
 
+import jwt
 import psycopg
 import pytest
 from alembic import command
 from alembic.config import Config
+from cryptography.hazmat.primitives.asymmetric import ec
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from app.core.auth import JwksCache
 from app.core.config import get_settings, to_libpq_url
 from app.core.db import make_engine
 from app.main import create_app
@@ -126,3 +132,124 @@ def drain_secrets(monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[str, str]]:
     yield DRAIN_SECRET, DRAIN_SECRET_PREVIOUS
     monkeypatch.undo()
     get_settings.cache_clear()
+
+
+# --------------------------------------------------------------------------- auth (Story 1.3)
+
+SUPABASE_URL = "http://supabase.test"
+JWT_SECRET = "test-supabase-jwt-secret-with-at-least-32-characters"
+ES256_KID = "test-es256-key"
+
+
+class TokenFactory:
+    """Signs test access tokens the way Supabase Auth does (HS256 secret or ES256 JWKS key)."""
+
+    def __init__(self) -> None:
+        self.ec_private_key = ec.generate_private_key(ec.SECP256R1())
+        self.jwks_fetches = 0
+
+    @property
+    def issuer(self) -> str:
+        return f"{SUPABASE_URL}/auth/v1"
+
+    def jwks(self) -> dict:
+        jwk = json.loads(jwt.algorithms.ECAlgorithm.to_jwk(self.ec_private_key.public_key()))
+        jwk.update({"kid": ES256_KID, "alg": "ES256", "use": "sig"})
+        return {"keys": [jwk]}
+
+    async def fetch_jwks(self) -> dict:
+        self.jwks_fetches += 1
+        return self.jwks()
+
+    def claims(self, sub: uuid.UUID | str, email: str | None, **overrides: object) -> dict:
+        now = int(time.time())
+        claims: dict = {
+            "sub": str(sub),
+            "email": email,
+            "aud": "authenticated",
+            "iss": self.issuer,
+            "iat": now,
+            "exp": now + 3600,
+            "role": "authenticated",
+        }
+        claims.update(overrides)
+        return {k: v for k, v in claims.items() if v is not None}
+
+    def token(
+        self,
+        sub: uuid.UUID | str,
+        email: str | None,
+        *,
+        alg: str = "HS256",
+        kid: str | None = None,
+        **overrides: object,
+    ) -> str:
+        payload = self.claims(sub, email, **overrides)
+        if alg == "HS256":
+            return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+        if alg == "ES256":
+            return jwt.encode(
+                payload, self.ec_private_key, algorithm="ES256", headers={"kid": kid or ES256_KID}
+            )
+        raise ValueError(alg)
+
+    @staticmethod
+    def headers(token: str) -> dict[str, str]:
+        return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture
+def tokens(monkeypatch: pytest.MonkeyPatch, app) -> Iterator[TokenFactory]:
+    """Point Settings at a fake Supabase project and give ``app`` a fake JWKS endpoint."""
+    monkeypatch.setenv("SUPABASE_URL", SUPABASE_URL)
+    monkeypatch.setenv("SUPABASE_JWT_SECRET", JWT_SECRET)
+    get_settings.cache_clear()
+    factory = TokenFactory()
+    app.state.jwks = JwksCache(factory.fetch_jwks)
+    yield factory
+    monkeypatch.undo()
+    get_settings.cache_clear()
+
+
+@pytest.fixture
+def accounts(migrated_db: str) -> Iterator["AccountFactory"]:
+    """Create ``accounts`` rows directly; every row created here is deleted afterwards."""
+    factory = AccountFactory(migrated_db)
+    yield factory
+    factory.cleanup()
+
+
+class AccountFactory:
+    def __init__(self, url: str) -> None:
+        self.url = to_libpq_url(url)
+        self.ids: list[uuid.UUID] = []
+
+    def track(self, account_id: uuid.UUID) -> uuid.UUID:
+        self.ids.append(account_id)
+        return account_id
+
+    def new_identity(self) -> tuple[uuid.UUID, str]:
+        """A fresh (uid, email) pair, tracked for cleanup, with no row yet."""
+        account_id = self.track(uuid.uuid4())
+        return account_id, f"user-{account_id.hex[:12]}@example.test"
+
+    def create(self, *, role: str = "student", email: str | None = None) -> uuid.UUID:
+        account_id, default_email = self.new_identity()
+        with psycopg.connect(self.url, autocommit=True) as conn:
+            conn.execute(
+                "INSERT INTO app.accounts (id, email, role) VALUES (%s, %s, %s)",
+                (account_id, email or default_email, role),
+            )
+        return account_id
+
+    def row(self, account_id: uuid.UUID) -> tuple | None:
+        with psycopg.connect(self.url) as conn:
+            return conn.execute(
+                "SELECT id, email, role FROM app.accounts WHERE id = %s", (account_id,)
+            ).fetchone()
+
+    def cleanup(self) -> None:
+        if not self.ids:
+            return
+        with psycopg.connect(self.url, autocommit=True) as conn:
+            conn.execute("DELETE FROM app.accounts WHERE id = ANY(%s)", (self.ids,))

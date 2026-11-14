@@ -12,6 +12,8 @@ dependencies = [
     "psycopg[binary]==3.3.8",
     "alembic==1.20.1",
     "procrastinate==3.10.0",
+    "pyjwt[crypto]==2.15.1",
+    "cryptography==50.0.2",
 ]
 
 [dependency-groups]

@@ -10,3 +10,12 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-2-background-jobs-that-survive-a-sleeping-server.md`
   summary: Check the per-drain DB connection count (lock connection + Procrastinate pool max 4 + SQLAlchemy pool) against the hosted Supavisor session-pooler client limit.
   evidence: unverified (medium if true). Settle it by reading the Supabase project's pooler limits once provisioned and counting connections during a drain.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-3-sign-up-log-in-and-roles.md`
+  summary: Add a "Forgot password?" flow (Supabase recovery email → /auth/confirm type=recovery → set new password page) and point the recovery/email-change templates at /auth/confirm.
+  evidence: Story 1.3 review: email/password users have no way to reset a forgotten password; no story in the epics covers it.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-3-sign-up-log-in-and-roles.md`
+  summary: Test the web API client's bearer-token hook (createClientConfig auth → Authorization header on getMe) with a mocked Supabase browser client.
+  evidence: Story 1.3 verification-gap review; typecheck/build pass even if the token is never attached.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-3-sign-up-log-in-and-roles.md`
+  summary: Make record_event tolerate an owner_id whose account was deleted (e.g. insert with owner_id NULL), so Story 1.9 purge jobs don't lose their ops_events rows.
+  evidence: ops_events.owner_id now has an FK to accounts; job events for already-deleted owners fail to insert (caught and logged, event lost).

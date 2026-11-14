@@ -25,23 +25,27 @@ Supabase CLI config (`supabase/`). The architecture rules live in
 ```bash
 # 0. Config: copy the template (defaults already target the Supabase CLI stack)
 cp .env.example .env
-echo "NEXT_PUBLIC_API_URL=http://localhost:8000" > web/.env.local
 
-# 1. Supabase CLI stack (Postgres on :54322, Auth, Storage, Studio on :54323)
+# 1. Supabase CLI stack (Postgres on :54322, Auth on :54321, Studio on :54323, Mailpit on :54324)
 npx supabase start
+npx supabase status   # note the anon key and the JWT secret
+#    -> .env:           SUPABASE_JWT_SECRET=<JWT secret>
+#    -> web/.env.local: NEXT_PUBLIC_API_URL=http://localhost:8000
+#                       NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321
+#                       NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon key>
 
 # 2. api
 cd api
 uv sync
 uv run alembic upgrade head          # creates + locks down schema `app`
 uv run uvicorn app.main:app --reload --port 8000
-# -> http://localhost:8000/api/v1/health  => {"status":"ok"}
+# -> http://localhost:8000/api/v1/public/health  => {"status":"ok"}
 
 # 3. web (new terminal)
 cd web
 npm ci
 npm run dev
-# -> http://localhost:3000 shows "API health: ok"
+# -> http://localhost:3000 shows "API health: ok"; /signup creates an account
 ```
 
 > **Windows:** psycopg's async driver cannot use the default Proactor event loop. Tests and
@@ -56,6 +60,7 @@ npm run dev
 | `uv run lint-imports` | Module order, kernel isolation, vendor-SDK isolation |
 | `uv run python scripts/check_exposed_schema.py` | AD-1 check: nothing in `public`/`graphql_public`, RLS on, no grants to `anon`/`authenticated` |
 | `uv run python scripts/drain_local.py` | Run one job drain locally (`--every 300` to loop every 5 minutes, like pg_cron) |
+| `uv run python scripts/promote_admin.py <email>` | Make an existing account an admin (audited; see "Auth and roles") |
 | `uv run alembic revision -m "..."` | New migration. Call `migrations.helpers.create_app_table_rls(table)` for every new table. |
 
 | Command (from `web/`) | Purpose |
@@ -123,6 +128,63 @@ during rotation) and is never in the OpenAPI schema.
 **Rotation:** set `DRAIN_SECRET_PREVIOUS=<old>` and `DRAIN_SECRET=<new>` on Render, update the
 Vault `drain_secret` and the GitHub secret, then clear `DRAIN_SECRET_PREVIOUS`.
 
+## Auth and roles (AD-5, Story 1.3)
+
+- **Sign-in** is Supabase Auth (email + password, or Google) in `web`, with an `@supabase/ssr`
+  cookie session. `web/src/proxy.ts` refreshes the session cookie on every page request,
+  sends signed-out visitors of `/onboarding` to `/login` and signed-in visitors of
+  `/login`/`/signup` to `/onboarding`. `web` uses Supabase **only** for Auth.
+- **Email confirmation is required.** After sign-up the user sees "Check your email". The link
+  (template `supabase/templates/confirmation.html`) opens `/auth/confirm?token_hash=...`,
+  which sets the session and lands on `/onboarding`; a bad or expired link shows
+  `/auth/error` with a "Resend confirmation email" form. Locally, read the mails in Mailpit at
+  <http://127.0.0.1:54324>. Google and other OAuth redirects come back to `/auth/callback`.
+- **The API** verifies every `Authorization: Bearer <access token>` (`app/core/auth.py`):
+  signature (ES256/RS256 keys from `<SUPABASE_URL>/auth/v1/.well-known/jwks.json`, cached, or
+  HS256 with `SUPABASE_JWT_SECRET`), `exp`, `aud = authenticated`, `iss = <SUPABASE_URL>/auth/v1`.
+  The first valid request creates the `accounts` row (`id` = Auth uid, role `student`). The
+  role is always read from `accounts`, never from token claims. The generated web client sends
+  the token automatically for operations that declare the bearer scheme.
+- **Route classes** are router-level dependencies in `app/main.py`, so new routes are protected
+  by default: `include_api_router` (`/api/v1/*`, valid token, else 401),
+  `include_admin_router` (`/api/v1/admin/*`, role `admin`, else 403),
+  `include_public_router` (`/api/v1/public/*`, no token; health is `GET /api/v1/public/health`),
+  `include_internal_router` (`/internal/*`, drain secret).
+- **Admins** are created only by the CLI; no API changes a role:
+
+  ```bash
+  cd api
+  uv run python scripts/promote_admin.py person@example.com   # DATABASE_URL picks the database
+  ```
+
+  The person must have signed up and opened the app once (so the `accounts` row exists). The
+  role change and an `admin_audit` row (`account.promote_admin`, actor NULL = system) commit
+  together; an unknown email exits 1 and changes nothing. `admin_audit` is insert-only (DB
+  trigger). For the first prod admin, run it with `DATABASE_URL` set to the session-pooler URL.
+
+### Google sign-in setup
+
+1. Google Cloud Console → APIs & Services → Credentials → *Create OAuth client ID* (type: Web
+   application). Authorized redirect URIs: `https://<project-ref>.supabase.co/auth/v1/callback`
+   (hosted) and `http://127.0.0.1:54321/auth/v1/callback` (local CLI).
+2. **Hosted:** Supabase dashboard → Authentication → Sign In / Providers → Google: enable, paste
+   the client id and secret. Nothing goes in the repo, Render or Vercel.
+3. **Local:** put `SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID=...` and
+   `SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET=...` in `supabase/.env` (gitignored), then
+   `npx supabase stop && npx supabase start`. `supabase/config.toml` reads them with `env(...)`.
+
+### Hosted Auth settings (one-time)
+
+Supabase dashboard → Authentication:
+
+- **URL Configuration:** Site URL = the Vercel production URL; Redirect URLs =
+  `https://<vercel-domain>/**` (plus `http://localhost:3000/**` if you test locally against prod).
+- **Emails → Confirm signup:** paste `supabase/templates/confirmation.html` (links to
+  `/auth/confirm`). "Confirm email" stays enabled (the default).
+- **Render env:** `SUPABASE_URL=https://<project-ref>.supabase.co`, and `SUPABASE_JWT_SECRET`
+  only while the project still signs with the legacy HS256 secret.
+- **Vercel env:** `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
+
 ## CI (`.github/workflows/ci.yml`)
 
 On every push and PR: Postgres 17 service + Supabase roles SQL → `alembic upgrade head` →
@@ -141,10 +203,12 @@ failed migration stops the release. Nothing deploys on push.
    or the IPv6 direct host). Leave Data API exposed schemas at `public, graphql_public`.
 2. **Render (Free)** — create a Blueprint from `render.yaml` (one web service, `rootDir: api`,
    auto-deploy off). Set `DATABASE_URL` (session pooler URL) and `WEB_ORIGIN` (the Vercel
-   production URL). Copy the service's **Deploy Hook** URL.
+   production URL), `SUPABASE_URL` and (if still used) `SUPABASE_JWT_SECRET`. Copy the
+   service's **Deploy Hook** URL.
 3. **Vercel (Hobby)** — import the project with `web/` as the working directory (the CLI
    deploys from `web/`, so leave *Root Directory* empty); Git auto-deploy is disabled by
-   `web/vercel.json`. Set `NEXT_PUBLIC_API_URL` to the Render URL. Get the org and project
+   `web/vercel.json`. Set `NEXT_PUBLIC_API_URL` to the Render URL, and
+   `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` (see "Auth and roles"). Get the org and project
    ids from `web/.vercel/project.json` after `npx vercel link`, and create a token.
 4. **GitHub `production` environment secrets** — `MIGRATION_DATABASE_URL`,
    `RENDER_DEPLOY_HOOK_URL`, `RENDER_API_KEY`, `RENDER_SERVICE_ID` (the `srv-...` id),

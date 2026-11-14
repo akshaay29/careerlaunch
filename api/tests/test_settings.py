@@ -48,3 +48,27 @@ def test_drain_settings_defaults_and_cap(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setenv("DRAIN_TIMEOUT_SECONDS", "241")
     with pytest.raises(ValidationError):
         Settings(_env_file=None)
+
+
+def test_supabase_url_normalised(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SUPABASE_URL", "  https://x.supabase.co/ ")
+    s = Settings(_env_file=None)
+    assert s.supabase_issuer == "https://x.supabase.co/auth/v1"
+    assert s.supabase_jwks_url == "https://x.supabase.co/auth/v1/.well-known/jwks.json"
+
+
+@pytest.mark.parametrize(
+    "url", [None, "http://localhost:54321", "http://127.0.0.1:54321", "http://[::1]:54321"]
+)
+def test_prod_rejects_local_supabase_url(monkeypatch: pytest.MonkeyPatch, url: str | None) -> None:
+    from pydantic import ValidationError
+
+    monkeypatch.setenv("ENVIRONMENT", "prod")
+    if url is None:
+        monkeypatch.delenv("SUPABASE_URL", raising=False)
+    else:
+        monkeypatch.setenv("SUPABASE_URL", url)
+    with pytest.raises(ValidationError, match="SUPABASE_URL"):
+        Settings(_env_file=None)
+    monkeypatch.setenv("SUPABASE_URL", "https://x.supabase.co")
+    assert Settings(_env_file=None).supabase_url == "https://x.supabase.co"
