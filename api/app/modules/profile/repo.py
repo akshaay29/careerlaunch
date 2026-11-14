@@ -1,5 +1,5 @@
-"""profile.repo: SQL for the ``resumes``, ``skill_profiles`` and ``preferences`` tables only
-(AD-2). Every query is owner-scoped."""
+"""profile.repo: SQL for the ``resumes``, ``documents``, ``skill_profiles`` and ``preferences``
+tables only (AD-2). Every query is owner-scoped."""
 
 import uuid
 from datetime import datetime
@@ -9,7 +9,7 @@ from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.profile.models import Preferences, Resume, SkillProfile
+from app.modules.profile.models import Document, Preferences, Resume, SkillProfile
 
 
 async def lock_owner_resumes(session: AsyncSession, owner_id: uuid.UUID) -> None:
@@ -117,6 +117,87 @@ async def delete_resume(
         delete(Resume)
         .where(Resume.owner_id == owner_id, Resume.id == resume_id)
         .returning(Resume)
+        .execution_options(synchronize_session=False)
+    )
+    return result.scalar_one_or_none()
+
+
+# --------------------------------------------------------------------------- documents
+
+
+async def lock_owner_documents(session: AsyncSession, owner_id: uuid.UUID) -> None:
+    """Serialise Document changes of one owner (cap check) until the transaction ends."""
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+        {"key": f"documents:{owner_id}"},
+    )
+
+
+async def count_documents(session: AsyncSession, owner_id: uuid.UUID) -> int:
+    result = await session.execute(
+        select(func.count()).select_from(Document).where(Document.owner_id == owner_id)
+    )
+    return int(result.scalar_one())
+
+
+async def insert_document(
+    session: AsyncSession,
+    *,
+    document_id: uuid.UUID,
+    owner_id: uuid.UUID,
+    filename: str,
+    content_type: str,
+    size_bytes: int,
+    sha256: str,
+) -> Document:
+    stmt = (
+        insert(Document)
+        .values(
+            id=document_id,
+            owner_id=owner_id,
+            filename=filename,
+            content_type=content_type,
+            size_bytes=size_bytes,
+            sha256=sha256,
+        )
+        .returning(Document)
+        .execution_options(populate_existing=True)
+    )
+    return (await session.execute(stmt)).scalar_one()
+
+
+async def get_document(
+    session: AsyncSession, owner_id: uuid.UUID, document_id: uuid.UUID
+) -> Document | None:
+    result = await session.execute(
+        select(Document)
+        .where(Document.owner_id == owner_id, Document.id == document_id)
+        .execution_options(populate_existing=True)
+    )
+    return result.scalar_one_or_none()
+
+
+async def list_documents_page(
+    session: AsyncSession, owner_id: uuid.UUID, *, limit: int, before: uuid.UUID | None
+) -> list[Document]:
+    """Newest first (UUID v7 ids are time-ordered); ``before`` is the cursor (exclusive)."""
+    stmt = select(Document).where(Document.owner_id == owner_id)
+    if before is not None:
+        stmt = stmt.where(Document.id < before)
+    stmt = (
+        stmt.order_by(Document.id.desc()).limit(limit).execution_options(populate_existing=True)
+    )
+    return list((await session.execute(stmt)).scalars())
+
+
+async def delete_document(
+    session: AsyncSession, owner_id: uuid.UUID, document_id: uuid.UUID
+) -> Document | None:
+    """Delete the row; returns it (or None when the owner has no such row)."""
+    result = await session.execute(
+        delete(Document)
+        .where(Document.owner_id == owner_id, Document.id == document_id)
+        .returning(Document)
         .execution_options(synchronize_session=False)
     )
     return result.scalar_one_or_none()

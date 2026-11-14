@@ -50,3 +50,5 @@ services:
         value: private
       - key: RESUME_MAX_VERSIONS
         value: "10"
+      - key: DOCUMENT_MAX_COUNT
+        value: "20"

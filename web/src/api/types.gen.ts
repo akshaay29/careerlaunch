@@ -5,6 +5,18 @@ export type ClientOptions = {
 };
 
 /**
+ * Body_uploadDocument
+ */
+export type BodyUploadDocument = {
+    /**
+     * File
+     *
+     * A PDF, DOCX or plain-text file of 5 MB or less
+     */
+    file: Blob | File;
+};
+
+/**
  * Body_uploadResume
  */
 export type BodyUploadResume = {
@@ -99,6 +111,67 @@ export type DegreeOut = {
      * Label
      */
     label: string;
+};
+
+/**
+ * DocumentDownload
+ *
+ * A signed URL that downloads the file as an attachment; it stops working at
+ * ``expires_at`` (5 minutes or less).
+ */
+export type DocumentDownload = {
+    /**
+     * Url
+     */
+    url: string;
+    /**
+     * Expires At
+     */
+    expires_at: string;
+};
+
+/**
+ * DocumentList
+ *
+ * Newest first. Pass ``next_cursor`` as ``cursor`` to get the next page (null = done).
+ */
+export type DocumentList = {
+    /**
+     * Items
+     */
+    items: Array<DocumentOut>;
+    /**
+     * Next Cursor
+     */
+    next_cursor: string | null;
+};
+
+/**
+ * DocumentOut
+ *
+ * One stored Document. ``filename`` is untrusted text: render it as plain text.
+ */
+export type DocumentOut = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Filename
+     */
+    filename: string;
+    /**
+     * Content Type
+     */
+    content_type: 'application/pdf' | 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' | 'text/plain';
+    /**
+     * Size Bytes
+     */
+    size_bytes: number;
+    /**
+     * Created At
+     */
+    created_at: string;
 };
 
 /**
@@ -767,6 +840,145 @@ export type DeleteResumeResponses = {
 };
 
 export type DeleteResumeResponse = DeleteResumeResponses[keyof DeleteResumeResponses];
+
+export type ListDocumentsData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Limit
+         */
+        limit?: number;
+        /**
+         * Cursor
+         */
+        cursor?: string | null;
+    };
+    url: '/api/v1/documents';
+};
+
+export type ListDocumentsErrors = {
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ListDocumentsError = ListDocumentsErrors[keyof ListDocumentsErrors];
+
+export type ListDocumentsResponses = {
+    /**
+     * Successful Response
+     */
+    200: DocumentList;
+};
+
+export type ListDocumentsResponse = ListDocumentsResponses[keyof ListDocumentsResponses];
+
+export type UploadDocumentData = {
+    body: BodyUploadDocument;
+    path?: never;
+    query?: never;
+    url: '/api/v1/documents';
+};
+
+export type UploadDocumentErrors = {
+    /**
+     * The Document cap is reached
+     */
+    409: unknown;
+    /**
+     * The file is larger than 5 MB
+     */
+    413: unknown;
+    /**
+     * The file is not a PDF, DOCX or plain-text file
+     */
+    415: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type UploadDocumentError = UploadDocumentErrors[keyof UploadDocumentErrors];
+
+export type UploadDocumentResponses = {
+    /**
+     * Successful Response
+     */
+    201: DocumentOut;
+};
+
+export type UploadDocumentResponse = UploadDocumentResponses[keyof UploadDocumentResponses];
+
+export type GetDocumentDownloadData = {
+    body?: never;
+    path: {
+        /**
+         * Document Id
+         */
+        document_id: string;
+    };
+    query?: never;
+    url: '/api/v1/documents/{document_id}/download';
+};
+
+export type GetDocumentDownloadErrors = {
+    /**
+     * No such Document for this Student
+     */
+    404: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type GetDocumentDownloadError = GetDocumentDownloadErrors[keyof GetDocumentDownloadErrors];
+
+export type GetDocumentDownloadResponses = {
+    /**
+     * Successful Response
+     */
+    200: DocumentDownload;
+};
+
+export type GetDocumentDownloadResponse = GetDocumentDownloadResponses[keyof GetDocumentDownloadResponses];
+
+export type DeleteDocumentData = {
+    body?: never;
+    path: {
+        /**
+         * Document Id
+         */
+        document_id: string;
+    };
+    query?: never;
+    url: '/api/v1/documents/{document_id}';
+};
+
+export type DeleteDocumentErrors = {
+    /**
+     * No such Document for this Student
+     */
+    404: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type DeleteDocumentError = DeleteDocumentErrors[keyof DeleteDocumentErrors];
+
+export type DeleteDocumentResponses = {
+    /**
+     * Successful Response
+     */
+    204: void;
+};
+
+export type DeleteDocumentResponse = DeleteDocumentResponses[keyof DeleteDocumentResponses];
 
 export type GetSkillProfileData = {
     body?: never;

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { SignOutButton } from "@/components/auth/sign-out-button";
 import { ONBOARDING_PATH } from "@/lib/auth-paths";
 import { SETTINGS_CONSENT_PATH } from "@/lib/consent";
+import { SETTINGS_DOCUMENTS_PATH } from "@/lib/documents";
 import { SETTINGS_PREFERENCES_PATH } from "@/lib/preferences";
 import { SETTINGS_RESUMES_PATH } from "@/lib/resumes";
 import { SETTINGS_SKILLS_PATH } from "@/lib/skill-profile";
@@ -20,6 +21,11 @@ const PAGES = [
     href: SETTINGS_RESUMES_PATH,
     title: "Resumes",
     description: "Upload Resume versions and choose the active one.",
+  },
+  {
+    href: SETTINGS_DOCUMENTS_PATH,
+    title: "Documents",
+    description: "Store cover letters, transcripts and certificates, and download them.",
   },
   {
     href: SETTINGS_SKILLS_PATH,
