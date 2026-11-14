@@ -202,14 +202,41 @@ async def test_ops_events_owner_can_only_be_nulled(accounts: AccountFactory, mig
         conn.execute("DELETE FROM app.ops_events WHERE id = %s", (event_id,))
 
 
-async def test_ops_events_owner_must_be_an_account() -> None:
-    from sqlalchemy.exc import IntegrityError
-
-    async with get_sessionmaker()() as session:
-        with pytest.raises(IntegrityError):
-            await record_event(session, "x.test", owner_id=uuid.uuid4())
+async def test_ops_events_owner_without_account_is_stored_as_null(
+    migrated_db: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A deleted (or unknown) owner never fails the insert: the row keeps its counts and the
+    owner becomes NULL (Story 1.9: job bookkeeping for deleted owners is kept). The dropped
+    owner is logged (ids only), so a caller passing a wrong id is still visible."""
+    unknown = uuid.uuid4()
+    with caplog.at_level("WARNING", logger="app.ops"):
+        async with get_sessionmaker()() as session:
+            event_id = await record_event(session, "x.test", owner_id=unknown, counts={"n": 2})
             await session.commit()
-        await session.rollback()
+    (warning,) = [r for r in caplog.records if r.getMessage() == "ops_event_owner_dropped"]
+    assert warning.owner_id == str(unknown) and warning.event_id == str(event_id)
+    assert warning.kind == "x.test"
+    with _connect(migrated_db) as conn:
+        row = conn.execute(
+            "SELECT owner_id, counts FROM app.ops_events WHERE id = %s", (event_id,)
+        ).fetchone()
+    assert row == (None, {"n": 2})
+
+
+async def test_ops_events_keeps_an_existing_owner(
+    accounts: AccountFactory, migrated_db: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    owner = accounts.create()
+    with caplog.at_level("WARNING", logger="app.ops"):
+        async with get_sessionmaker()() as session:
+            event_id = await record_event(session, "x.test", owner_id=owner)
+            event_none = await record_event(session, "x.test")
+            await session.commit()
+    assert not [r for r in caplog.records if r.getMessage() == "ops_event_owner_dropped"]
+    assert event_none
+    with _connect(migrated_db) as conn:
+        row = conn.execute("SELECT owner_id FROM app.ops_events WHERE id = %s", (event_id,)).fetchone()
+    assert row == (owner,)
 
 
 # --------------------------------------------------------------------------- account deletion

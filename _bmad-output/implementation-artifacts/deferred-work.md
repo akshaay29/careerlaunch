@@ -52,3 +52,9 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-8-store-and-download-my-other-documents.md`
   summary: Add component tests for `DocumentManager` (delete confirm, signed-out path, load-more merge) once `web` has a harness.
   evidence: Only the pure helpers in `lib/documents.ts` are tested.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-9-delete-my-account-and-all-my-data.md`
+  summary: Require recent authentication (Supabase reauthenticate / OTP, or an `iat` freshness check) and a rate limit on `DELETE /api/v1/me`.
+  evidence: The only confirmation is the account email, which the page displays, so a stolen or left-open session can delete the account.
+- source_spec: `_bmad-output/implementation-artifacts/spec-1-9-delete-my-account-and-all-my-data.md`
+  summary: Add component tests for `DeleteAccount` (204 redirect, 422 on the field, 401 path, disabled while pending) once `web` has a harness.
+  evidence: Only the helpers in `lib/account-deletion.ts` are tested.

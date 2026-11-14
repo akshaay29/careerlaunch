@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { SignOutButton } from "@/components/auth/sign-out-button";
+import { SETTINGS_ACCOUNT_PATH } from "@/lib/account-deletion";
 import { ONBOARDING_PATH } from "@/lib/auth-paths";
 import { SETTINGS_CONSENT_PATH } from "@/lib/consent";
 import { SETTINGS_DOCUMENTS_PATH } from "@/lib/documents";
@@ -36,6 +37,11 @@ const PAGES = [
     href: SETTINGS_PREFERENCES_PATH,
     title: "Preferences",
     description: "Roles, locations, eligibility, Match Score threshold, alerts and time zone.",
+  },
+  {
+    href: SETTINGS_ACCOUNT_PATH,
+    title: "Account",
+    description: "Delete your account and all of your data.",
   },
 ];
 

@@ -242,3 +242,114 @@ def test_from_settings_requires_the_service_role_key() -> None:
         Settings(supabase_url="http://supabase.test/", supabase_service_role_key=SecretStr(KEY))
     )
     assert isinstance(store, SupabaseStorageFileStore)
+
+
+# --------------------------------------------------------------------------- delete_prefix
+
+OWNER = "0193a0a0-0000-7000-8000-00000000000a"
+
+
+def _listing_store(tree: dict[str, list[dict]], *, fail_list: int | None = None):
+    """A store whose list endpoint serves ``tree`` (folder -> entries, paged by limit/offset)
+    and whose delete endpoint records the paths."""
+    deleted: list[list[str]] = []
+
+    def responder(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content) if request.content else {}
+        if request.method == "POST" and request.url.path.endswith("/object/list/private"):
+            if fail_list is not None:
+                return httpx.Response(fail_list, json={"error": "boom"})
+            entries = tree.get(body["prefix"], [])
+            return httpx.Response(200, json=entries[body["offset"] : body["offset"] + body["limit"]])
+        if request.method == "DELETE" and request.url.path.endswith("/object/private"):
+            deleted.append(body["prefixes"])
+            return httpx.Response(200, json=[])
+        return httpx.Response(500)
+
+    store, rec = store_with(responder)
+    return store, rec, deleted
+
+
+def _file(name: str) -> dict:
+    return {"name": name, "id": "0193a0a0-0000-7000-8000-0000000000ff", "metadata": {}}
+
+
+def _folder(name: str) -> dict:
+    return {"name": name, "id": None, "metadata": None}
+
+
+async def test_delete_prefix_recurses_into_folders_and_deletes_every_object() -> None:
+    tree = {
+        OWNER: [_folder("document"), _folder("resume")],
+        f"{OWNER}/resume": [_file("r1"), _file("r2")],
+        f"{OWNER}/document": [_file("d1")],
+    }
+    store, rec, deleted = _listing_store(tree)
+    assert await store.delete_prefix(f"{OWNER}/") == 3
+    assert sorted(p for batch in deleted for p in batch) == sorted(
+        [f"{OWNER}/resume/r1", f"{OWNER}/resume/r2", f"{OWNER}/document/d1"]
+    )
+    lists = [r for r in rec.requests if r.method == "POST"]
+    assert {json.loads(r.content)["prefix"] for r in lists} == set(tree)
+    for r in rec.requests:
+        assert_auth(r)
+
+
+async def test_delete_prefix_pages_and_batches() -> None:
+    from app.adapters.supabase_storage.store import DELETE_BATCH_SIZE, LIST_PAGE_SIZE
+
+    n = LIST_PAGE_SIZE * 2 + 5
+    tree = {OWNER: [_folder("resume")], f"{OWNER}/resume": [_file(f"f{i:04d}") for i in range(n)]}
+    store, _, deleted = _listing_store(tree)
+    assert await store.delete_prefix(f"{OWNER}/") == n
+    assert all(len(batch) <= DELETE_BATCH_SIZE for batch in deleted)
+    assert len({p for batch in deleted for p in batch}) == n
+
+
+async def test_delete_prefix_of_empty_prefix_returns_zero() -> None:
+    store, rec, deleted = _listing_store({})
+    assert await store.delete_prefix(f"{OWNER}/") == 0
+    assert deleted == []
+    assert len(rec.requests) == 1
+
+
+async def test_delete_prefix_list_error_becomes_file_store_error() -> None:
+    store, _, deleted = _listing_store({}, fail_list=500)
+    with pytest.raises(FileStoreError, match="HTTP 500"):
+        await store.delete_prefix(f"{OWNER}/")
+    assert deleted == []
+
+
+@pytest.mark.parametrize("bad", ["", "/", "/abs/", "a/../b/"])
+async def test_delete_prefix_rejects_unsafe_prefixes(bad: str) -> None:
+    store, rec, _ = _listing_store({})
+    with pytest.raises(ValueError):
+        await store.delete_prefix(bad)
+    assert rec.requests == []
+
+
+@pytest.mark.parametrize("bad", ["", "/", "//", "/abs/", "a/../b/", ".."])
+async def test_fake_follows_the_adapters_prefix_rules(bad: str) -> None:
+    from tests.fakes.file_store import FakeFileStore
+
+    fake = FakeFileStore()
+    await fake.put(f"{OWNER}/resume/x", b"x", "application/pdf")
+    with pytest.raises(ValueError):
+        await fake.delete_prefix(bad)
+    store, rec, _ = _listing_store({})
+    with pytest.raises(ValueError):
+        await store.delete_prefix(bad)
+    assert rec.requests == [] and fake.paths_under(f"{OWNER}/")
+
+
+async def test_prefix_without_trailing_slash_names_the_same_folder() -> None:
+    from tests.fakes.file_store import FakeFileStore
+
+    fake = FakeFileStore()
+    await fake.put(f"{OWNER}/resume/x", b"x", "application/pdf")
+    await fake.put(f"{OWNER}x/resume/y", b"x", "application/pdf")  # a sibling, not under it
+    assert await fake.delete_prefix(OWNER) == 1
+    assert fake.paths_under(f"{OWNER}x/") == [f"{OWNER}x/resume/y"]
+    store, rec, _ = _listing_store({OWNER: [_file("x")]})
+    assert await store.delete_prefix(OWNER) == 1
+    assert json.loads(rec.requests[0].content)["prefix"] == OWNER

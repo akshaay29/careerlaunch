@@ -61,6 +61,15 @@ class PreferencesChanged(Event):
     owner_id: uuid.UUID
 
 
+@dataclass(frozen=True)
+class AccountDeleting(Event):
+    """The owner's account is being deleted (FR-2, AD-17). Published inside the deletion
+    transaction BEFORE the ``accounts`` row (and, by cascade, every Student-owned row) is
+    deleted, so subscribers still see the owner's data and can cancel their own work."""
+
+    owner_id: uuid.UUID
+
+
 Handler = Callable[[AsyncSession, Any], Awaitable[None]]
 
 _subscribers: dict[type[Event], list[Handler]] = {}

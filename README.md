@@ -258,6 +258,38 @@ Supabase dashboard → Authentication:
   `profile.delete_document_file` job). No events are published. Another Student's id is a 404.
 - **Web:** `/settings/documents`.
 
+## Account deletion (FR-2, AD-17, Story 1.9)
+
+- **What is removed:** the `accounts` row and, by `ON DELETE CASCADE`, every Student-owned row
+  (consents, Resumes, Skill Profile, Preferences, Documents, schedules, and any later
+  `owner_id` table); every stored object under `<owner_id>/` in the private bucket; and the
+  Supabase Auth user. Nothing is soft-deleted, there is no grace period or undo, and no email
+  or other personal data is kept.
+- **What survives:** global rows only. `ops_events` and `admin_audit` keep ids and counts, with
+  their Student references set to NULL. `app.deleted_accounts` keeps a tombstone of the Auth
+  uid and timestamps (no email), so an access token issued before deletion gets 401 instead of
+  re-provisioning an empty account.
+- **How:** `DELETE /api/v1/me` with `{"confirm_email": ...}` (must equal the account email,
+  ignoring case and surrounding spaces; otherwise 422 on `confirm_email` and nothing changes).
+  One transaction publishes `AccountDeleting`, writes the tombstone, records `account.deleted`,
+  enqueues `accounts.purge_files` and `accounts.delete_auth_user` on the `priority` queue, and
+  deletes the `accounts` row. The after-response priority drain runs both jobs within seconds.
+- **Completion within 30 days:** both jobs are idempotent and retry for about 4 days (10
+  attempts, exponential backoff). On success each one stamps its column on the tombstone
+  (`files_purged_at`, `auth_deleted_at`) and records `account.files_purged`
+  (`counts.objects`) or `account.auth_deleted`, with no owner id. A global daily schedule row
+  (inserted by migration 0010) runs `accounts.resume_pending_deletions`, which re-enqueues the
+  missing job(s) for every tombstone older than an hour that is not stamped, using the same
+  keys, so a pending run is not duplicated. So a deletion keeps being retried daily until it
+  finishes. It finishes within 30 days as long as Storage and Auth are reachable on some day
+  in that window and the drains are running. A tombstone with a NULL column is a deletion
+  that has not finished yet.
+- **Convention:** `tests/test_owner_fk_convention.py` fails if a new `app` table with an
+  `owner_id` column does not cascade from `accounts(id)` (the allow-list is `ops_events`, SET
+  NULL), or if any FK to `accounts` is neither CASCADE nor SET NULL.
+- **Web:** `/settings/account` (type your email to enable "Delete my account"); after a 204
+  the browser session is cleared and the user lands on the public `/account-deleted` page.
+
 ## CI (`.github/workflows/ci.yml`)
 
 On every push and PR: Postgres 17 service + Supabase roles SQL → `alembic upgrade head` →

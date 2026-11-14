@@ -5,6 +5,19 @@ export type ClientOptions = {
 };
 
 /**
+ * AccountDeletion
+ *
+ * Confirms an account deletion: the account's email, typed by the Student. Compared
+ * after trimming and ignoring case.
+ */
+export type AccountDeletion = {
+    /**
+     * Confirm Email
+     */
+    confirm_email: string;
+};
+
+/**
  * Body_uploadDocument
  */
 export type BodyUploadDocument = {
@@ -577,6 +590,29 @@ export type GetAdminMeResponses = {
 };
 
 export type GetAdminMeResponse = GetAdminMeResponses[keyof GetAdminMeResponses];
+
+export type DeleteMeData = {
+    body: AccountDeletion;
+    path?: never;
+    query?: never;
+    url: '/api/v1/me';
+};
+
+export type DeleteMeErrors = {
+    /**
+     * confirm_email does not match the account email
+     */
+    422: unknown;
+};
+
+export type DeleteMeResponses = {
+    /**
+     * Successful Response
+     */
+    204: void;
+};
+
+export type DeleteMeResponse = DeleteMeResponses[keyof DeleteMeResponses];
 
 export type GetMeData = {
     body?: never;

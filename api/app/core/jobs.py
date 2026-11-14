@@ -558,3 +558,19 @@ async def drain(queues: Iterable[str] = QUEUES, timeout: float | None = None) ->
         return result
     finally:
         await lock_conn.close()
+
+
+# --------------------------------------------------------------------------- priority path
+
+# The after-response drain of the priority queue is short and bounded (AD-4 priority path).
+PRIORITY_DRAIN_TIMEOUT_SECONDS = 30
+
+
+async def drain_priority_after_response() -> None:
+    """Bounded in-process drain of the ``priority`` queue, run by routers as a post-response
+    background task after a Student-initiated change (AD-4.6). Never raises: a failed drain
+    is logged and the 5-minute cron drain picks the jobs up."""
+    try:
+        await drain(queues=(PRIORITY_QUEUE,), timeout=PRIORITY_DRAIN_TIMEOUT_SECONDS)
+    except Exception:
+        logger.exception("priority_drain_failed")

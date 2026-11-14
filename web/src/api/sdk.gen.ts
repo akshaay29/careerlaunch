@@ -2,7 +2,7 @@
 
 import { type Client, type ClientMeta, formDataBodySerializer, type Options as Options2, type RequestResult, type TDataShape } from './client';
 import { client } from './client.gen';
-import type { ActivateResumeData, ActivateResumeErrors, ActivateResumeResponses, DeleteDocumentData, DeleteDocumentErrors, DeleteDocumentResponses, DeleteResumeData, DeleteResumeErrors, DeleteResumeResponses, EditSkillProfileData, EditSkillProfileErrors, EditSkillProfileResponses, GetAdminMeData, GetAdminMeResponses, GetDocumentDownloadData, GetDocumentDownloadErrors, GetDocumentDownloadResponses, GetHealthData, GetHealthResponses, GetMeData, GetMeResponses, GetPreferencesData, GetPreferencesResponses, GetResumeDownloadData, GetResumeDownloadErrors, GetResumeDownloadResponses, GetSkillProfileData, GetSkillProfileResponses, GrantConsentData, GrantConsentErrors, GrantConsentResponses, ListConsentsData, ListConsentsResponses, ListDegreesData, ListDegreesResponses, ListDocumentsData, ListDocumentsErrors, ListDocumentsResponses, ListResumesData, ListResumesErrors, ListResumesResponses, ResetSkillProfileData, ResetSkillProfileResponses, RevokeConsentData, RevokeConsentErrors, RevokeConsentResponses, SavePreferencesData, SavePreferencesErrors, SavePreferencesResponses, SuggestSkillsData, SuggestSkillsErrors, SuggestSkillsResponses, UploadDocumentData, UploadDocumentErrors, UploadDocumentResponses, UploadResumeData, UploadResumeErrors, UploadResumeResponses } from './types.gen';
+import type { ActivateResumeData, ActivateResumeErrors, ActivateResumeResponses, DeleteDocumentData, DeleteDocumentErrors, DeleteDocumentResponses, DeleteMeData, DeleteMeErrors, DeleteMeResponses, DeleteResumeData, DeleteResumeErrors, DeleteResumeResponses, EditSkillProfileData, EditSkillProfileErrors, EditSkillProfileResponses, GetAdminMeData, GetAdminMeResponses, GetDocumentDownloadData, GetDocumentDownloadErrors, GetDocumentDownloadResponses, GetHealthData, GetHealthResponses, GetMeData, GetMeResponses, GetPreferencesData, GetPreferencesResponses, GetResumeDownloadData, GetResumeDownloadErrors, GetResumeDownloadResponses, GetSkillProfileData, GetSkillProfileResponses, GrantConsentData, GrantConsentErrors, GrantConsentResponses, ListConsentsData, ListConsentsResponses, ListDegreesData, ListDegreesResponses, ListDocumentsData, ListDocumentsErrors, ListDocumentsResponses, ListResumesData, ListResumesErrors, ListResumesResponses, ResetSkillProfileData, ResetSkillProfileResponses, RevokeConsentData, RevokeConsentErrors, RevokeConsentResponses, SavePreferencesData, SavePreferencesErrors, SavePreferencesResponses, SuggestSkillsData, SuggestSkillsErrors, SuggestSkillsResponses, UploadDocumentData, UploadDocumentErrors, UploadDocumentResponses, UploadResumeData, UploadResumeErrors, UploadResumeResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -30,6 +30,22 @@ export const getAdminMe = <ThrowOnError extends boolean = false>(options?: Optio
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/api/v1/admin/me',
     ...options
+});
+
+/**
+ * Delete Me
+ *
+ * Delete my account and all my data (FR-2). Confirmed by typing the account email.
+ * Stored files and the Auth user are removed by jobs, started right after the response.
+ */
+export const deleteMe = <ThrowOnError extends boolean = false>(options: Options<DeleteMeData, ThrowOnError>): RequestResult<DeleteMeResponses, DeleteMeErrors, ThrowOnError> => (options.client ?? client).delete<DeleteMeResponses, DeleteMeErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/v1/me',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
 });
 
 /**

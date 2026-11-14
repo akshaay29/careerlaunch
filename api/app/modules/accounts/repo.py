@@ -1,13 +1,15 @@
-"""accounts.repo: SQL for the ``accounts`` and ``consents`` tables only (AD-2)."""
+"""accounts.repo: SQL for the ``accounts``, ``consents`` and ``deleted_accounts`` tables only
+(AD-2)."""
 
 import uuid
+from datetime import timedelta
 from typing import Literal
 
-from sqlalchemy import func, select, update
+from sqlalchemy import Text, Uuid, delete, exists, func, literal, or_, select, update
 from sqlalchemy.dialects.postgresql import distinct_on, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.accounts.models import Account, Consent
+from app.modules.accounts.models import Account, Consent, DeletedAccount
 
 
 async def get(session: AsyncSession, account_id: uuid.UUID) -> Account | None:
@@ -26,17 +28,27 @@ async def get_by_email_for_update(session: AsyncSession, email: str) -> Account 
     return result.scalar_one_or_none()
 
 
-async def upsert_email(session: AsyncSession, account_id: uuid.UUID, email: str) -> Account:
+async def upsert_email(
+    session: AsyncSession, account_id: uuid.UUID, email: str
+) -> Account | None:
     """Insert ``(id, email)`` with the default role, or refresh the email of an existing row.
-    The role is never written here."""
+    The role is never written here.
+
+    The insert is conditional, in the same statement, on ``account_id`` having no tombstone in
+    ``deleted_accounts``; returns None when nothing was written because of a tombstone.
+    """
+    tombstoned = exists().where(DeletedAccount.id == account_id)
+    source = select(
+        literal(account_id, type_=Uuid()).label("id"), literal(email, type_=Text()).label("email")
+    ).where(~tombstoned)
     stmt = (
         insert(Account)
-        .values(id=account_id, email=email)
+        .from_select(["id", "email"], source)
         .on_conflict_do_update(index_elements=[Account.id], set_={"email": email})
         .returning(Account)
         .execution_options(populate_existing=True)
     )
-    return (await session.execute(stmt)).scalar_one()
+    return (await session.execute(stmt)).scalar_one_or_none()
 
 
 async def set_role(session: AsyncSession, account_id: uuid.UUID, role: str) -> None:
@@ -50,6 +62,87 @@ async def lock_for_consent_change(session: AsyncSession, account_id: uuid.UUID) 
         select(Account.id).where(Account.id == account_id).with_for_update(key_share=True)
     )
     return result.scalar_one_or_none() is not None
+
+
+async def get_for_update(session: AsyncSession, account_id: uuid.UUID) -> Account | None:
+    result = await session.execute(
+        select(Account)
+        .where(Account.id == account_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    return result.scalar_one_or_none()
+
+
+async def delete_account(session: AsyncSession, account_id: uuid.UUID) -> bool:
+    """Delete the ``accounts`` row; every Student-owned row goes with it (ON DELETE CASCADE)
+    and global rows' Student references become NULL (ON DELETE SET NULL)."""
+    result = await session.execute(
+        delete(Account)
+        .where(Account.id == account_id)
+        .returning(Account.id)
+        .execution_options(synchronize_session=False)
+    )
+    return result.scalar_one_or_none() is not None
+
+
+# --------------------------------------------------------------------------- tombstones
+
+
+async def is_deleted(session: AsyncSession, account_id: uuid.UUID) -> bool:
+    result = await session.execute(
+        select(DeletedAccount.id).where(DeletedAccount.id == account_id)
+    )
+    return result.scalar_one_or_none() is not None
+
+
+async def mark_files_purged(session: AsyncSession, account_id: uuid.UUID) -> None:
+    """Record that the account's stored files are gone (first success wins; no-op without a
+    tombstone)."""
+    await session.execute(
+        update(DeletedAccount)
+        .where(DeletedAccount.id == account_id, DeletedAccount.files_purged_at.is_(None))
+        .values(files_purged_at=func.now())
+        .execution_options(synchronize_session=False)
+    )
+
+
+async def mark_auth_deleted(session: AsyncSession, account_id: uuid.UUID) -> None:
+    """Record that the account's Auth user is gone (first success wins; no-op without a
+    tombstone)."""
+    await session.execute(
+        update(DeletedAccount)
+        .where(DeletedAccount.id == account_id, DeletedAccount.auth_deleted_at.is_(None))
+        .values(auth_deleted_at=func.now())
+        .execution_options(synchronize_session=False)
+    )
+
+
+async def pending_deletions(
+    session: AsyncSession, older_than: timedelta, limit: int
+) -> list[DeletedAccount]:
+    """Tombstones older than ``older_than`` whose files or Auth user are not yet removed."""
+    result = await session.execute(
+        select(DeletedAccount)
+        .where(
+            DeletedAccount.deleted_at < func.now() - older_than,
+            or_(
+                DeletedAccount.files_purged_at.is_(None),
+                DeletedAccount.auth_deleted_at.is_(None),
+            ),
+        )
+        .order_by(DeletedAccount.deleted_at)
+        .limit(limit)
+        .execution_options(populate_existing=True)
+    )
+    return list(result.scalars())
+
+
+async def insert_tombstone(session: AsyncSession, account_id: uuid.UUID) -> None:
+    """Record ``account_id`` as deleted (idempotent)."""
+    await session.execute(
+        insert(DeletedAccount).values(id=account_id).on_conflict_do_nothing(index_elements=["id"])
+    )
 
 
 # --------------------------------------------------------------------------- consents

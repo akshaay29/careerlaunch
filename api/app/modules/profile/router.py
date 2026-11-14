@@ -29,7 +29,7 @@ from app.core import degrees, skills
 from app.core.auth import Actor, current_actor
 from app.core.config import get_settings
 from app.core.db import get_session
-from app.core.jobs import PRIORITY_QUEUE, drain
+from app.core.jobs import drain_priority_after_response
 from app.modules.profile import service
 from app.modules.profile.files import MAX_FILE_BYTES
 from app.modules.profile.models import Document, Preferences, Resume, SkillProfile
@@ -58,19 +58,13 @@ Session = Annotated[AsyncSession, Depends(get_session)]
 CurrentActor = Annotated[Actor, Depends(current_actor)]
 Store = Annotated[FileStore, Depends(file_store_dependency)]
 
-# The after-response drain of the priority queue is short and bounded (AD-4 priority path).
-PRIORITY_DRAIN_TIMEOUT_SECONDS = 30
-
 _PROBLEM = {"content": {"application/problem+json": {}}}
 _NOT_FOUND = {404: {"description": "No such Resume version for this Student", **_PROBLEM}}
 
 
-async def drain_priority() -> None:
-    """Bounded in-process drain of the ``priority`` queue, run after the response."""
-    try:
-        await drain(queues=(PRIORITY_QUEUE,), timeout=PRIORITY_DRAIN_TIMEOUT_SECONDS)
-    except Exception:
-        logger.exception("priority_drain_failed")
+# The shared after-response priority drain (``core.jobs``); a module global so tests can
+# replace it.
+drain_priority = drain_priority_after_response
 
 
 async def _read_upload(file: UploadFile) -> bytes:

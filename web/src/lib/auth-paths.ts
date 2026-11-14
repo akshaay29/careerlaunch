@@ -5,6 +5,8 @@ export const SIGNUP_PATH = "/signup";
 export const ONBOARDING_PATH = "/onboarding";
 export const AUTH_ERROR_PATH = "/auth/error";
 export const SETTINGS_PATH = "/settings";
+/** Shown after an account deletion. Public: the user is already signed out. */
+export const ACCOUNT_DELETED_PATH = "/account-deleted";
 
 /** Pages only a signed-in user may see (the proxy redirects others to /login). */
 export const PROTECTED_PREFIXES = [ONBOARDING_PATH, SETTINGS_PATH];

@@ -76,6 +76,40 @@
             "SupabaseAccessToken": []
           }
         ]
+      },
+      "delete": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Delete Me",
+        "description": "Delete my account and all my data (FR-2). Confirmed by typing the account email.\nStored files and the Auth user are removed by jobs, started right after the response.",
+        "operationId": "deleteMe",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountDeletion"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "confirm_email does not match the account email",
+            "content": {
+              "application/problem+json": {}
+            }
+          }
+        },
+        "security": [
+          {
+            "SupabaseAccessToken": []
+          }
+        ]
       }
     },
     "/api/v1/consents": {
@@ -973,6 +1007,21 @@
   },
   "components": {
     "schemas": {
+      "AccountDeletion": {
+        "properties": {
+          "confirm_email": {
+            "type": "string",
+            "maxLength": 320,
+            "title": "Confirm Email"
+          }
+        },
+        "type": "object",
+        "required": [
+          "confirm_email"
+        ],
+        "title": "AccountDeletion",
+        "description": "Confirms an account deletion: the account's email, typed by the Student. Compared\nafter trimming and ignoring case."
+      },
       "Body_uploadDocument": {
         "properties": {
           "file": {
