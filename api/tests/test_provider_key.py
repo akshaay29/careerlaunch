@@ -342,14 +342,18 @@ async def test_replace_keeps_the_row_id(
 
 
 def _add_schedule(url: str, owner_id: uuid.UUID, kind: str) -> uuid.UUID:
-    schedule_id = uuid.uuid7()
+    """The owner's unpaused schedule of ``kind`` (saving a key already creates the
+    ``listings.collect`` one, Story 2.3)."""
     with _connect(url) as conn:
-        conn.execute(
+        row = conn.execute(
             'INSERT INTO app.schedules (id, kind, owner_id, next_run_at, "interval") '
-            "VALUES (%s, %s, %s, now() + interval '1 hour', interval '1 day')",
-            (schedule_id, kind, owner_id),
-        )
-    return schedule_id
+            "VALUES (%s, %s, %s, now() + interval '1 hour', interval '1 day') "
+            "ON CONFLICT ON CONSTRAINT schedules_kind_owner_key DO UPDATE SET paused = false "
+            "RETURNING id",
+            (uuid.uuid7(), kind, owner_id),
+        ).fetchone()
+    assert row is not None
+    return row[0]
 
 
 def _paused(url: str, schedule_id: uuid.UUID) -> bool:

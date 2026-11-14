@@ -1,5 +1,5 @@
-"""accounts.repo: SQL for the ``accounts``, ``consents``, ``deleted_accounts`` and
-``provider_credentials`` tables only (AD-2)."""
+"""accounts.repo: SQL for the ``accounts``, ``consents``, ``deleted_accounts``,
+``provider_credentials`` and ``provider_status`` tables only (AD-2)."""
 
 import uuid
 from datetime import timedelta
@@ -10,7 +10,13 @@ from sqlalchemy.dialects.postgresql import distinct_on, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError
-from app.modules.accounts.models import Account, Consent, DeletedAccount, ProviderCredential
+from app.modules.accounts.models import (
+    Account,
+    Consent,
+    DeletedAccount,
+    ProviderCredential,
+    ProviderStatus,
+)
 
 
 async def get(session: AsyncSession, account_id: uuid.UUID) -> Account | None:
@@ -295,3 +301,9 @@ async def delete_credential(
         .execution_options(synchronize_session=False)
     )
     return result.scalar_one_or_none()
+
+
+async def get_provider_status(
+    session: AsyncSession, owner_id: uuid.UUID
+) -> ProviderStatus | None:
+    return await session.get(ProviderStatus, owner_id, populate_existing=True)

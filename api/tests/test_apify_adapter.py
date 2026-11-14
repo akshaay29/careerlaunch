@@ -1,6 +1,7 @@
 """ApifyProviderRunner against an httpx.MockTransport: URL, headers, the documented status
 mapping, token secrecy, and the port wiring."""
 
+import json
 import logging
 from collections.abc import Iterator
 
@@ -18,8 +19,10 @@ from app.ports.provider_runner import (
     LazyProviderRunner,
     ProviderAccount,
     ProviderKeyInvalid,
+    ProviderRejected,
     ProviderRunner,
     ProviderUnavailable,
+    RunState,
     get_provider_runner,
 )
 from tests.fakes.provider_runner import FakeProviderRunner
@@ -167,10 +170,13 @@ def test_from_settings_uses_the_configured_base_and_platform() -> None:
 
 @pytest.fixture
 def restore_ports() -> Iterator[None]:
+    from app.ports import source_adapter as source_adapter_port
+
     saved = (
         auth_admin_port._installed,
         file_store_port._installed,
         provider_runner_port._installed,
+        source_adapter_port._provider_source,
     )
     try:
         yield
@@ -179,6 +185,7 @@ def restore_ports() -> Iterator[None]:
             auth_admin_port._installed,
             file_store_port._installed,
             provider_runner_port._installed,
+            source_adapter_port._provider_source,
         ) = saved
 
 
@@ -190,3 +197,206 @@ def test_app_wiring_installs_a_lazy_runner_and_accepts_a_fake() -> None:
     fake = FakeProviderRunner()
     app = create_app(provider_runner=fake)
     assert app.state.provider_runner is fake and get_provider_runner() is fake
+
+
+# --------------------------------------------------------------------------- runs (Story 2.3)
+
+RUN_BODY = {
+    "data": {
+        "id": "fakerun0001",
+        "status": "RUNNING",
+        "defaultDatasetId": "fakedataset0001",
+        "usageTotalUsd": 0.0123,
+    }
+}
+
+
+async def test_start_run_request() -> None:
+    runner, requests = runner_with(lambda r: httpx.Response(201, json=RUN_BODY))
+    run_input = {"urls": ["https://www.linkedin.com/jobs/search/?keywords=x"], "limitPerSource": 5}
+    run_id = await runner.start_run(
+        SecretStr(TOKEN),
+        "curious_coder/linkedin-jobs-scraper",
+        run_input,
+        max_items=100,
+        max_charge_usd=0.25,
+    )
+    assert run_id == "fakerun0001"
+    (req,) = requests
+    assert req.method == "POST"
+    assert req.url.path == "/v2/acts/curious_coder~linkedin-jobs-scraper/runs"
+    assert dict(req.url.params) == {"maxItems": "100", "maxTotalChargeUsd": "0.25"}
+    assert req.headers["authorization"] == f"Bearer {TOKEN}"
+    assert req.headers["x-apify-integration-platform"] == "careerlaunch"
+    assert json.loads(req.content) == run_input
+    assert TOKEN not in str(req.url) and TOKEN.encode() not in req.content
+    body = req.content.lower()
+    for word in (b"cookie", b"li_at", b"login", b"password"):
+        assert word not in body
+
+
+async def test_start_run_rejects_bad_arguments() -> None:
+    runner, requests = runner_with(lambda r: httpx.Response(201, json=RUN_BODY))
+    for actor in ("no-slash", "a/b/c", "../x/y"):
+        with pytest.raises(ValueError):
+            await runner.start_run(SecretStr(TOKEN), actor, {}, max_items=1, max_charge_usd=1)
+    with pytest.raises(ValueError):
+        await runner.start_run(SecretStr(TOKEN), "a/b", {}, max_items=0, max_charge_usd=1)
+    with pytest.raises(ValueError):
+        await runner.start_run(SecretStr(TOKEN), "a/b", {}, max_items=1, max_charge_usd=0)
+    with pytest.raises(TypeError):
+        await runner.start_run(TOKEN, "a/b", {}, max_items=1, max_charge_usd=1)  # type: ignore[arg-type]
+    assert requests == []
+
+
+async def test_max_charge_is_a_fixed_decimal() -> None:
+    runner, requests = runner_with(lambda r: httpx.Response(201, json=RUN_BODY))
+    await runner.start_run(SecretStr(TOKEN), "a/b", {}, max_items=1, max_charge_usd=0.00001)
+    assert requests[0].url.params["maxTotalChargeUsd"] == "0.00001"
+
+
+async def test_abort_run() -> None:
+    runner, requests = runner_with(lambda r: httpx.Response(200, json=RUN_BODY))
+    assert await runner.abort_run(SecretStr(TOKEN), "fakerun0001") is None
+    (req,) = requests
+    assert req.method == "POST" and req.url.path == "/v2/actor-runs/fakerun0001/abort"
+    assert req.headers["x-apify-integration-platform"] == "careerlaunch"
+
+
+@pytest.mark.parametrize("status", [400, 401, 403, 404, 500])
+async def test_abort_run_swallows_errors(status: int, caplog: pytest.LogCaptureFixture) -> None:
+    runner, _ = runner_with(lambda r: httpx.Response(status, json={"error": {"type": "x"}}))
+    with caplog.at_level(logging.DEBUG):
+        await runner.abort_run(SecretStr(TOKEN), "run1")  # never raises
+    assert TOKEN not in caplog.text
+
+    def boom(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("c")
+
+    runner, _ = runner_with(boom)
+    await runner.abort_run(SecretStr(TOKEN), "run1")
+
+
+@pytest.mark.parametrize(
+    ("status", "error"),
+    [
+        (401, ProviderKeyInvalid),
+        (402, ProviderRejected),
+        (403, ProviderRejected),
+        (429, ProviderUnavailable),
+        (500, ProviderUnavailable),
+        (404, ProviderUnavailable),
+    ],
+)
+async def test_run_call_error_mapping(status: int, error: type[Exception]) -> None:
+    body = {"error": {"type": "not-enough-usage-to-run-paid-actor", "message": "m"}}
+    runner, _ = runner_with(lambda r: httpx.Response(status, json=body))
+    for call in (
+        runner.start_run(SecretStr(TOKEN), "a/b", {}, max_items=1, max_charge_usd=1),
+        runner.get_run(SecretStr(TOKEN), "run1"),
+        runner.fetch_items(SecretStr(TOKEN), "ds1", limit=5),
+    ):
+        with pytest.raises(error) as exc:
+            await call
+        assert TOKEN not in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        httpx.Response(201, content=b"<html>"),
+        httpx.Response(201, json={"data": {}}),
+        httpx.Response(201, json={"data": {"id": "has space"}}),
+        httpx.Response(201, json=[]),
+    ],
+)
+async def test_start_run_without_a_run_id_is_unavailable(response: httpx.Response) -> None:
+    runner, _ = runner_with(lambda r: response)
+    with pytest.raises(ProviderUnavailable):
+        await runner.start_run(SecretStr(TOKEN), "a/b", {}, max_items=1, max_charge_usd=1)
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("READY", "READY"),
+        ("RUNNING", "RUNNING"),
+        ("TIMING-OUT", "RUNNING"),
+        ("ABORTING", "RUNNING"),
+        ("SUCCEEDED", "SUCCEEDED"),
+        ("FAILED", "FAILED"),
+        ("TIMED-OUT", "TIMED-OUT"),
+        ("ABORTED", "ABORTED"),
+    ],
+)
+async def test_get_run(raw: str, expected: str) -> None:
+    body = {"data": {**RUN_BODY["data"], "status": raw}}
+    runner, requests = runner_with(lambda r: httpx.Response(200, json=body))
+    state = await runner.get_run(SecretStr(TOKEN), "fakerun0001")
+    assert state == RunState(expected, 0.0123, "fakedataset0001")  # type: ignore[arg-type]
+    (req,) = requests
+    assert req.method == "GET" and req.url.path == "/v2/actor-runs/fakerun0001"
+    assert req.headers["x-apify-integration-platform"] == "careerlaunch"
+
+
+async def test_get_run_unknown_status_or_missing_fields() -> None:
+    runner, _ = runner_with(lambda r: httpx.Response(200, json={"data": {"status": "WEIRD"}}))
+    with pytest.raises(ProviderUnavailable):
+        await runner.get_run(SecretStr(TOKEN), "run1")
+    runner, _ = runner_with(
+        lambda r: httpx.Response(200, json={"data": {"status": "SUCCEEDED", "usageTotalUsd": "x"}})
+    )
+    assert await runner.get_run(SecretStr(TOKEN), "run1") == RunState("SUCCEEDED", None, None)
+    with pytest.raises(ValueError):
+        await runner.get_run(SecretStr(TOKEN), "../users/me")
+
+
+async def test_fetch_items() -> None:
+    items = [{"id": "1"}, {"id": "2"}, "junk", {"id": "3"}]
+    runner, requests = runner_with(lambda r: httpx.Response(200, json=items))
+    got = await runner.fetch_items(SecretStr(TOKEN), "fakedataset0001", limit=3)
+    assert got == [{"id": "1"}, {"id": "2"}]
+    (req,) = requests
+    assert req.url.path == "/v2/datasets/fakedataset0001/items"
+    assert dict(req.url.params) == {"format": "json", "clean": "true", "limit": "3"}
+    assert req.headers["authorization"] == f"Bearer {TOKEN}"
+    runner, _ = runner_with(lambda r: httpx.Response(200, json={"items": []}))
+    with pytest.raises(ProviderUnavailable):
+        await runner.fetch_items(SecretStr(TOKEN), "ds1", limit=3)
+
+
+async def test_lazy_runner_delegates_runs() -> None:
+    fake = FakeProviderRunner()
+    lazy = LazyProviderRunner(lambda: fake)
+    run_id = await lazy.start_run(SecretStr(TOKEN), "a/b", {"x": 1}, max_items=2, max_charge_usd=0.1)
+    assert run_id == "run1" and fake.started[0].max_items == 2
+    assert (await lazy.get_run(SecretStr(TOKEN), run_id)).status == "SUCCEEDED"
+    assert await lazy.fetch_items(SecretStr(TOKEN), "ds1", limit=1) == []
+    await lazy.abort_run(SecretStr(TOKEN), run_id)
+    assert fake.aborted == [(TOKEN, run_id)]
+
+
+@pytest.mark.usefixtures("restore_ports")
+def test_app_wiring_installs_the_linkedin_source() -> None:
+    from app.adapters.apify import ApifyLinkedInSource
+    from app.ports.source_adapter import get_provider_source
+
+    app = create_app()
+    assert isinstance(get_provider_source(), ApifyLinkedInSource)
+    assert app.state.provider_source is get_provider_source()
+
+
+@pytest.mark.usefixtures("restore_ports")
+def test_unsupported_allowlisted_actor_fails_startup(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.core.config import get_settings
+
+    monkeypatch.setenv(
+        "APIFY_ACTOR_ALLOWLIST", "curious_coder/linkedin-jobs-scraper,someone/other-actor"
+    )
+    get_settings.cache_clear()
+    try:
+        with pytest.raises(ValueError, match="someone/other-actor"):
+            create_app()
+    finally:
+        monkeypatch.undo()
+        get_settings.cache_clear()

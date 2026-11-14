@@ -96,3 +96,22 @@ class ProviderCredential(Base):
 
     def __repr__(self) -> str:
         return f"ProviderCredential(id={self.id!s}, provider={self.provider!r})"
+
+
+class ProviderStatus(Base):
+    """A Student's collection status across every provider purpose (DDL in migration
+    0013_provider_runs). No row means ``active``. Story 2.4 writes it."""
+
+    __tablename__ = "provider_status"
+
+    owner_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("accounts.id", ondelete="CASCADE"), primary_key=True
+    )
+    status: Mapped[str] = mapped_column(Text, server_default="active")
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    exhausted_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )

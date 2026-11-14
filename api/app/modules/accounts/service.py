@@ -402,3 +402,36 @@ async def decrypt_credential(
         return SecretStr(crypto.decrypt(row.ciphertext, _aad(row.id, owner_id)))
     except crypto.CredentialError:
         raise ProviderKeyUnreadableError() from None
+
+
+# --------------------------------------------------------------------------- provider status
+
+
+@dataclass(frozen=True)
+class ProviderStatusView:
+    """The owner's collection status (AD-12). ``status`` is ``active`` or ``paused``;
+    ``exhausted_until`` (credit exhausted) blocks runs until that time even when active."""
+
+    status: Literal["active", "paused"]
+    reason: str | None
+    exhausted_until: datetime | None
+
+    def blocks_runs(self, now: datetime) -> str | None:
+        """Why a run may not start now (``paused`` or ``exhausted``), or None."""
+        if self.status != "active":
+            return "paused"
+        if self.exhausted_until is not None and self.exhausted_until > now:
+            return "exhausted"
+        return None
+
+
+ACTIVE_PROVIDER_STATUS = ProviderStatusView("active", None, None)
+
+
+async def get_provider_status(session: AsyncSession, owner_id: uuid.UUID) -> ProviderStatusView:
+    """The owner's provider status; no row means active."""
+    row = await repo.get_provider_status(session, owner_id)
+    if row is None:
+        return ACTIVE_PROVIDER_STATUS
+    status: Literal["active", "paused"] = "active" if row.status == "active" else "paused"
+    return ProviderStatusView(status, row.reason, row.exhausted_until)

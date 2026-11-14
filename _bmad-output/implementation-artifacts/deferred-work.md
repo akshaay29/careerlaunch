@@ -67,3 +67,6 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-2-2-add-my-apify-provider-key.md`
   summary: Add component tests for the `ConsentPanel` `next` return and `ProviderKeyManager` (replace, cancel, delete dialog, consent round trip) once `web` has a harness.
   evidence: Only the `lib/provider-key.ts` helpers are tested.
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-3-collect-linkedin-listings-on-a-schedule.md`
+  summary: On account deletion, abort in-flight Apify runs, and decide whether anonymised `provider_runs` cost history should outlive the account (SET NULL plus a purpose marker) for spend accounting.
+  evidence: `provider_runs.owner_id` CASCADEs, so cost rows vanish and a running actor keeps billing until its max charge.

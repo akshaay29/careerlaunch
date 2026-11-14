@@ -29,6 +29,7 @@ from app.modules.accounts import events as accounts_events
 from app.modules.accounts.router import admin_router as accounts_admin_router
 from app.modules.accounts.router import router as accounts_router
 from app.modules.accounts.service import get_or_provision
+from app.modules.listings import events as listings_events
 from app.modules.listings.router import router as listings_router
 from app.modules.matching.router import router as matching_router
 from app.modules.profile import events as profile_events
@@ -43,6 +44,7 @@ from app.ports.provider_runner import (
     ProviderRunner,
     install_provider_runner,
 )
+from app.ports.source_adapter import ProviderSource, install_provider_source
 
 API_V1 = "/api/v1"
 API_ADMIN = f"{API_V1}/admin"
@@ -137,6 +139,31 @@ def install_provider_runner_port(
     return runner
 
 
+def check_actor_allowlist(actors: tuple[str, ...]) -> None:
+    """Every allowlisted actor must have a LinkedIn mapping (``SUPPORTED_ACTORS``)."""
+    unsupported = [a for a in actors if a not in apify.SUPPORTED_ACTORS]
+    if unsupported:
+        raise ValueError(
+            "APIFY_ACTOR_ALLOWLIST has actors with no LinkedIn mapping: "
+            + ", ".join(unsupported)
+            + f" (supported: {', '.join(apify.SUPPORTED_ACTORS)})"
+        )
+
+
+def install_provider_source_port(
+    app: FastAPI, source: ProviderSource | None = None
+) -> ProviderSource:
+    """Wire the ProviderSource (the LinkedIn mapping of the allowlisted Apify actors) for
+    the collection tasks. Without an injected one, every ``APIFY_ACTOR_ALLOWLIST`` entry must
+    have a mapping, else startup fails with ``ValueError`` naming the unsupported actors."""
+    if source is None:
+        check_actor_allowlist(get_settings().apify_actors)
+        source = apify.ApifyLinkedInSource()
+    app.state.provider_source = source
+    install_provider_source(source)
+    return source
+
+
 def create_app(
     settings: Settings | None = None,
     jwks: JwksCache | None = None,
@@ -183,9 +210,11 @@ def create_app(
     install_files(app, file_store)
     install_auth_admin_port(app, auth_admin)
     install_provider_runner_port(app, provider_runner)
+    install_provider_source_port(app)
     # Domain-event subscribers, registered explicitly at startup (idempotent).
     accounts_events.register()
     profile_events.register()
+    listings_events.register()
 
     # Admin and public first: routes match in mount order, so a token-only route such as
     # /{id}/... can never shadow /api/v1/admin/* or /api/v1/public/*.

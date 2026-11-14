@@ -5,8 +5,10 @@ Takes the session; never commits (routers and tasks commit).
 * :func:`ingest_draft` is the ONE way a Listing is written: upsert on
   ``(source, source_job_id)``, skills via ``core.skills``, ``search_doc`` built in SQL from
   bind parameters, the description discarded, visibility from ``pool_contribution`` consent.
-* :func:`collect_and_ingest` runs one adapter through it and publishes one
-  ``ListingsIngested`` per call.
+* :func:`ingest_drafts` stores a batch through it (one savepoint per draft) and publishes one
+  ``ListingsIngested`` per call; :func:`collect_and_ingest` runs one adapter through it.
+* :func:`start_provider_run` is the ONLY caller of ``ProviderRunner.start_run`` (AD-12);
+  :func:`poll_provider_run` collects the run's results through :func:`ingest_drafts`.
 * Browsing returns only Listings visible to the actor (pool, or private to them) that are
   not expired.
 """
@@ -15,22 +17,49 @@ import base64
 import binascii
 import logging
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime, timedelta
+from decimal import Decimal
+from typing import Any
 
+from pydantic import SecretStr
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import skills as core_skills
-from app.core.errors import InvalidInputError, NotFoundError
 from app.core import events as core_events
-from app.core.events import ListingsIngested
+from app.core import skills as core_skills
+from app.core.clock import local_day, next_local_time, utcnow
+from app.core.config import get_settings
+from app.core.db import get_sessionmaker
+from app.core.errors import (
+    CredentialsUnavailableError,
+    InvalidInputError,
+    NotFoundError,
+    ProviderKeyUnreadableError,
+)
+from app.core.events import ListingsIngested, ProviderKeyChanged
+from app.core.jobs import enqueue, upsert_owner_schedule
 from app.core.ops import record_event
 from app.modules.accounts import service as accounts_service
 from app.modules.accounts.consent_text import ConsentPurpose
 from app.modules.listings import repo
-from app.modules.listings.models import Listing
-from app.ports.source_adapter import ListingDraft, SourceAdapter, SourceQuery
+from app.modules.listings.models import Listing, ProviderRun
+from app.modules.listings.tasks import COLLECT, POLL_PROVIDER_RUN
+from app.modules.profile import service as profile_service
+from app.ports.provider_runner import (
+    TERMINAL_FAILURES,
+    ProviderKeyInvalid,
+    ProviderRejected,
+    ProviderUnavailable,
+    get_provider_runner,
+)
+from app.ports.source_adapter import (
+    ListingDraft,
+    SourceAdapter,
+    SourceQuery,
+    get_provider_source,
+)
 
 logger = logging.getLogger("app.listings")
 
@@ -122,33 +151,34 @@ async def ingest_draft(
     return result.listing_id, result.created
 
 
-async def collect_and_ingest(
+@dataclass(frozen=True)
+class IngestCounts:
+    """What one ingest call stored: ``listings`` visible to the collector (inserted or
+    refreshed), how many of them were ``created``, drafts the database ``rejected``, and
+    drafts stored but ``not_visible`` to the collector (another Student's private row)."""
+
+    listings: int
+    created: int
+    rejected: int
+    not_visible: int = 0
+
+
+async def ingest_drafts(
     session: AsyncSession,
-    adapter: SourceAdapter,
-    query: SourceQuery,
+    drafts: Iterable[ListingDraft],
     *,
     collected_by: uuid.UUID | None,
-) -> int:
-    """Collect from ``adapter`` and ingest at most ``query.limit`` drafts; returns the number
-    of Listings ingested that are visible to the collector.
+) -> IngestCounts:
+    """Ingest a batch of drafts in the caller's transaction (used by ``collect_and_ingest``
+    and by the provider-run poll).
 
-    A disabled or unknown Source records ``listings.collect_skipped`` and returns 0 without
-    calling the adapter. The collector's ``pool_contribution`` consent is read once (the
-    System always contributes). Each draft is stored in its own savepoint: a draft the
-    database refuses is skipped and counted as ``rejected``. Rows not visible to the
-    collector (another Student's private Listing) are left out of the count and the event.
-    One ``listings.ingested`` ops event (counts only) and, when anything visible was
-    ingested, one ``ListingsIngested`` are written in the caller's transaction.
+    The collector's ``pool_contribution`` consent is read once (the System always
+    contributes). Each draft is stored in its own savepoint: a draft the database refuses is
+    skipped and counted as ``rejected``. Rows not visible to the collector (another Student's
+    private Listing) are left out of the count and the event. When there was at least one
+    draft, one ``listings.ingested`` ops event (counts only) is written and, when anything
+    visible was ingested, one ``ListingsIngested``.
     """
-    source = await repo.get_source(session, adapter.source)
-    if source is None or not source.enabled:
-        await record_event(
-            session,
-            SKIPPED_EVENT,
-            owner_id=collected_by,
-            counts={"unknown_source" if source is None else "disabled": 1},
-        )
-        return 0
     contributes = (
         True
         if collected_by is None
@@ -157,11 +187,9 @@ async def collect_and_ingest(
         )
     )
     ids: dict[uuid.UUID, None] = {}
-    created = rejected = seen = 0
-    async for draft in adapter.collect(query):
+    created = rejected = seen = not_visible = 0
+    for draft in drafts:
         seen += 1
-        if draft.source != adapter.source:
-            raise ValueError("an adapter yielded a draft for another source")
         try:
             async with session.begin_nested():
                 result = await _upsert(
@@ -182,8 +210,8 @@ async def collect_and_ingest(
             if _visible_to_collector(result, collected_by):
                 ids[result.listing_id] = None
                 created += result.created
-        if seen >= query.limit:
-            break  # never pull more than the limit from the Source
+            else:
+                not_visible += 1
     if seen:
         await record_event(
             session,
@@ -195,7 +223,43 @@ async def collect_and_ingest(
         await core_events.publish(
             session, ListingsIngested(listing_ids=tuple(ids), collected_by=collected_by)
         )
-    return len(ids)
+    return IngestCounts(
+        listings=len(ids), created=created, rejected=rejected, not_visible=not_visible
+    )
+
+
+async def collect_and_ingest(
+    session: AsyncSession,
+    adapter: SourceAdapter,
+    query: SourceQuery,
+    *,
+    collected_by: uuid.UUID | None,
+) -> int:
+    """Collect at most ``query.limit`` drafts from ``adapter`` and ingest them with
+    :func:`ingest_drafts`; returns the number of Listings ingested that are visible to the
+    collector.
+
+    A disabled or unknown Source records ``listings.collect_skipped`` and returns 0 without
+    calling the adapter. A draft for another Source is a ``ValueError`` (nothing is stored).
+    """
+    source = await repo.get_source(session, adapter.source)
+    if source is None or not source.enabled:
+        await record_event(
+            session,
+            SKIPPED_EVENT,
+            owner_id=collected_by,
+            counts={"unknown_source" if source is None else "disabled": 1},
+        )
+        return 0
+    drafts: list[ListingDraft] = []
+    async for draft in adapter.collect(query):
+        if draft.source != adapter.source:
+            raise ValueError("an adapter yielded a draft for another source")
+        drafts.append(draft)
+        if len(drafts) >= query.limit:
+            break  # never pull more than the limit from the Source
+    counts = await ingest_drafts(session, drafts, collected_by=collected_by)
+    return counts.listings
 
 
 # --------------------------------------------------------------------------- browsing
@@ -265,3 +329,565 @@ async def get_listing(
     if row is None:
         raise NotFoundError(NOT_FOUND_DETAIL)
     return BrowseItem(row[0], row[1])
+
+
+# --------------------------------------------------------------------------- provider runs (AD-12)
+#
+# ``start_provider_run``, ``poll_provider_run`` and ``reap_stale_runs`` open their own short
+# transactions (and commit them) because a network call must never happen inside one: each
+# step commits before Apify is called, and the result is written in a new transaction.
+
+PURPOSE_JOBS = "jobs"
+PURPOSES = (PURPOSE_JOBS,)
+LINKEDIN = "linkedin"
+
+RUN_STARTED_EVENT = "listings.provider_run_started"
+RUN_REFUSED_EVENT = "listings.provider_run_refused"
+RUN_FAILED_EVENT = "listings.provider_run_failed"
+RUN_SUCCEEDED_EVENT = "listings.provider_run_succeeded"
+RUN_ORPHANED_EVENT = "listings.provider_run_orphaned"
+RUN_ENTITY = "provider_run"
+
+POLL_FIRST_DELAY = timedelta(seconds=60)
+POLL_MAX_DELAY = timedelta(minutes=10)
+RUN_TIMEOUT = timedelta(hours=3)
+# A ``starting`` row younger than this is another start in flight (a no-op for a caller);
+# an older one crashed mid-start.
+STARTING_CRASHED_AFTER = timedelta(minutes=10)
+# The hourly reaper fails ``starting`` rows older than this, and ``running`` rows started
+# longer ago than RUN_TIMEOUT + RUNNING_GRACE (their poll gave up).
+REAP_STARTING_AFTER = timedelta(minutes=15)
+REAP_RUNNING_GRACE = timedelta(hours=1)
+REAP_BATCH = 200
+
+_ACTIVE = ("starting", "running")
+
+
+@dataclass(frozen=True)
+class RunOutcome:
+    """Where a provider run stands after a call: its row id, ``status`` and ``error_kind``."""
+
+    run_id: uuid.UUID
+    status: str
+    error_kind: str | None = None
+
+
+def _outcome(run_id: uuid.UUID, run: ProviderRun | None) -> RunOutcome:
+    if run is None:
+        return RunOutcome(run_id, "missing")
+    return RunOutcome(run_id, run.status, run.error_kind)
+
+
+def poll_delay(attempts: int) -> timedelta:
+    """The wait before the next poll after ``attempts`` polls: 2 min, 4 min, 8 min, then 10
+    min (the first poll runs 60 s after the start)."""
+    seconds = POLL_FIRST_DELAY.total_seconds() * 2 ** min(max(attempts, 0), 10)
+    return min(timedelta(seconds=seconds), POLL_MAX_DELAY)
+
+
+def _clean_params(params: dict[str, Any]) -> dict[str, list[str]]:
+    """Only the collection scope is kept (role titles, locations, job types)."""
+
+    def strings(key: str) -> list[str]:
+        values = params.get(key) or []
+        if isinstance(values, str):
+            values = [values]
+        return [v.strip() for v in values if isinstance(v, str) and v.strip()]
+
+    return {
+        "role_titles": strings("role_titles"),
+        "locations": strings("locations"),
+        "job_types": [t for t in strings("job_types") if t in ("internship", "full_time")],
+    }
+
+
+def _query(params: dict[str, list[str]], limit: int) -> SourceQuery:
+    return SourceQuery(
+        role_titles=tuple(params["role_titles"]),
+        locations=tuple(params["locations"]),
+        job_types=tuple(params["job_types"]),  # type: ignore[arg-type]
+        limit=limit,
+    )
+
+
+async def _refusal(
+    session: AsyncSession,
+    owner_id: uuid.UUID | None,
+    actor: str | None,
+    scope: dict[str, list[str]],
+) -> str | None:
+    """Why a run may not start now, or None. Checked in order: role titles to search for,
+    ``provider_runs`` consent, ``provider_status`` (paused, credit exhausted), the platform
+    kill switch, the Source, the Provider Key, the actor allowlist. The System seed run (no
+    owner) skips the Student checks."""
+    if not scope["role_titles"]:
+        return "no_preferences"
+    if owner_id is not None:
+        if not await accounts_service.has_consent(
+            session, owner_id, ConsentPurpose.PROVIDER_RUNS
+        ):
+            return "no_consent"
+        status = await accounts_service.get_provider_status(session, owner_id)
+        blocked = status.blocks_runs(utcnow())
+        if blocked is not None:
+            return blocked
+    if not get_settings().provider_runs_enabled:
+        return "disabled"
+    source = await repo.get_source(session, LINKEDIN)
+    if source is None or not source.enabled:
+        return "source_disabled"
+    if owner_id is not None:
+        meta = await accounts_service.get_credential_meta(session, owner_id)
+        if not meta.has_key:
+            return "no_key"
+    if actor is None:
+        return "no_actor"
+    return None
+
+
+async def _abort(token: SecretStr | None, apify_run_id: str | None) -> None:
+    """Best-effort abort so a run we gave up on stops billing; never raises."""
+    if token is None or apify_run_id is None:
+        return
+    try:
+        await get_provider_runner().abort_run(token, apify_run_id)
+    except Exception as exc:
+        logger.warning("provider_run_abort_failed", extra={"exc_type": type(exc).__name__})
+
+
+async def _owner_token(owner_id: uuid.UUID | None) -> SecretStr | None:
+    """The owner's token for a best-effort abort, or None when it cannot be read."""
+    if owner_id is None:
+        return None
+    try:
+        async with get_sessionmaker()() as session:
+            return await accounts_service.decrypt_credential(session, owner_id)
+    except Exception as exc:
+        logger.warning("provider_token_unreadable", extra={"exc_type": type(exc).__name__})
+        return None
+
+
+async def _fail_run(
+    run_id: uuid.UUID,
+    owner_id: uuid.UUID | None,
+    error_kind: str,
+    *,
+    cost_usd: float | None = None,
+    only: tuple[str, ...] = _ACTIVE,
+) -> RunOutcome:
+    """Mark a row in one of the ``only`` states ``failed`` (in its own transaction) and record
+    ``listings.provider_run_failed``. A known ``cost_usd`` is stored; otherwise the last one
+    recorded is kept. Never starts a replacement run."""
+    async with get_sessionmaker()() as session:
+        run = await repo.get_run(session, run_id, for_update=True)
+        if run is None or run.status not in only:
+            return _outcome(run_id, run)
+        values: dict[str, Any] = {
+            "status": "failed",
+            "error_kind": error_kind,
+            "finished_at": utcnow(),
+        }
+        if cost_usd is not None:
+            values["cost_usd"] = Decimal(str(cost_usd))
+        await repo.update_run(session, run_id, **values)
+        await record_event(
+            session,
+            RUN_FAILED_EVENT,
+            owner_id=owner_id,
+            entity_type=RUN_ENTITY,
+            entity_id=run_id,
+            counts={error_kind: 1},
+        )
+        await session.commit()
+    logger.info("provider_run_failed", extra={"run_id": str(run_id), "error_kind": error_kind})
+    return RunOutcome(run_id, "failed", error_kind)
+
+
+async def start_provider_run(
+    owner_id: uuid.UUID | None,
+    purpose: str,
+    params: dict[str, Any],
+    *,
+    run_key: str,
+    token: SecretStr | None = None,
+    max_items: int | None = None,
+    max_charge_usd: float | None = None,
+) -> RunOutcome:
+    """THE Apify spend path (AD-12): the only caller of ``ProviderRunner.start_run``.
+
+    ``owner_id`` is the Student whose Provider Key pays, or None for the System seed run,
+    which passes the owner's ``token`` (no other caller passes one) and may lower the caps.
+    ``run_key`` is unique:
+
+    1. In a short transaction (serialised per ``run_key``): a row that already has an Apify
+       run id, or that failed or succeeded, is a no-op. A ``starting`` row without a run id
+       is another start in flight (a no-op) while younger than
+       :data:`STARTING_CRASHED_AFTER`; an older one crashed after the call may have started a
+       run, becomes ``failed``/``start_unknown`` and is never restarted. Otherwise the scope
+       (role titles), consent, ``provider_status``, the kill switch, the Source, the key and
+       the actor allowlist are checked: a failure stores the row as ``refused`` with its
+       ``error_kind`` (a later call for the same key checks again); success stores it as
+       ``starting``. Then commit.
+    2. With no transaction open, the key is decrypted and the first allowlisted actor is
+       started with its mapped input and the caps (``COLLECT_MAX_ITEMS``,
+       ``COLLECT_MAX_CHARGE_USD``).
+    3. In a new transaction, under the row lock, the run id is stored (``running``) only if
+       the row is still ``starting`` without a run id, and for a Student run the first
+       ``listings.poll_provider_run`` is enqueued 60 s out. Otherwise (the row was failed
+       meanwhile) the started run is an orphan: it is aborted (best effort) and
+       ``listings.provider_run_orphaned`` is recorded. A start error marks the row
+       ``failed`` with its ``error_kind`` instead (never retried: the next scheduled run
+       collects again).
+    """
+    if purpose not in PURPOSES:
+        raise ValueError(f"unknown provider-run purpose {purpose!r}")
+    if (owner_id is None) != (token is not None):
+        raise ValueError("only the System seed run (no owner) passes its own token")
+    settings = get_settings()
+    actors = settings.apify_actors
+    actor = actors[0] if actors else None
+    limit = max_items if max_items is not None else settings.collect_max_items
+    if not 1 <= limit <= 1000:
+        raise ValueError("max_items must be 1..1000")
+    charge = max_charge_usd if max_charge_usd is not None else settings.collect_max_charge_usd
+    if not 0 < charge <= 50:
+        raise ValueError("max_charge_usd must be > 0 and <= 50")
+    scope = _clean_params(params)
+
+    # 1. Commit the row before any network call.
+    async with get_sessionmaker()() as session:
+        await repo.lock_run_key(session, run_key)
+        existing = await repo.get_run_by_key(session, run_key)
+        if existing is not None and existing.status != "refused":
+            if existing.status == "starting" and existing.apify_run_id is None:
+                if utcnow() - existing.created_at < STARTING_CRASHED_AFTER:
+                    return _outcome(existing.id, existing)  # another start is in flight
+                existing_id = existing.id
+                await session.rollback()
+                return await _fail_run(
+                    existing_id, owner_id, "start_unknown", only=("starting",)
+                )
+            return _outcome(existing.id, existing)
+        refusal = await _refusal(session, owner_id, actor, scope)
+        values: dict[str, Any] = {
+            "status": "refused" if refusal else "starting",
+            "error_kind": refusal,
+            "actor": actor,
+            "params": scope,
+            "max_items": limit,
+            "max_charge_usd": Decimal(str(charge)),
+            "finished_at": utcnow() if refusal else None,
+        }
+        if existing is None:
+            run = await repo.insert_run(
+                session, owner_id=owner_id, purpose=purpose, run_key=run_key, **values
+            )
+            run_id = run.id
+        else:
+            run_id = existing.id
+            # A fresh ``created_at``: the in-flight window counts from this start.
+            await repo.update_run(session, run_id, created_at=utcnow(), **values)
+        if refusal:
+            await record_event(
+                session,
+                RUN_REFUSED_EVENT,
+                owner_id=owner_id,
+                entity_type=RUN_ENTITY,
+                entity_id=run_id,
+                counts={refusal: 1},
+            )
+        await session.commit()
+    if refusal:
+        return RunOutcome(run_id, "refused", refusal)
+    if actor is None:  # _refusal returns "no_actor" first; kept explicit for type checkers
+        raise RuntimeError("no allowlisted actor")
+
+    # 2. No transaction open from here until the result is written.
+    try:
+        if token is None:
+            if owner_id is None:
+                raise RuntimeError("a Student run needs its owner")
+            try:
+                async with get_sessionmaker()() as session:
+                    token = await accounts_service.decrypt_credential(session, owner_id)
+            except ProviderKeyUnreadableError:
+                return await _fail_run(run_id, owner_id, "key_unreadable")
+            except CredentialsUnavailableError:
+                return await _fail_run(run_id, owner_id, "credentials_unavailable")
+            if token is None:
+                return await _fail_run(run_id, owner_id, "no_key")
+        try:
+            run_input = get_provider_source().run_input(actor, _query(scope, limit))
+        except ValueError:
+            return await _fail_run(run_id, owner_id, "bad_input")
+        apify_run_id = await get_provider_runner().start_run(
+            token, actor, run_input, max_items=limit, max_charge_usd=charge
+        )
+    except ProviderKeyInvalid:
+        return await _fail_run(run_id, owner_id, "key_invalid")
+    except ProviderRejected:
+        return await _fail_run(run_id, owner_id, "rejected")
+    except ProviderUnavailable:
+        return await _fail_run(run_id, owner_id, "unavailable")
+    except ValueError:
+        return await _fail_run(run_id, owner_id, "bad_input")
+    except Exception as exc:
+        # The class name only: an exception message could carry request details.
+        logger.warning("provider_run_start_error", extra={"exc_type": type(exc).__name__})
+        return await _fail_run(run_id, owner_id, "start_error")
+
+    # 3. Store the run id and schedule the first poll, unless the row moved on meanwhile.
+    async with get_sessionmaker()() as session:
+        locked = await repo.get_run(session, run_id, for_update=True)
+        if locked is None or locked.status != "starting" or locked.apify_run_id is not None:
+            await record_event(
+                session,
+                RUN_ORPHANED_EVENT,
+                owner_id=owner_id if locked is not None else None,
+                entity_type=RUN_ENTITY,
+                entity_id=run_id if locked is not None else None,
+            )
+            await session.commit()
+            orphaned = True
+        else:
+            orphaned = False
+            await repo.update_run(
+                session, run_id, status="running", apify_run_id=apify_run_id, started_at=utcnow()
+            )
+            if owner_id is not None:
+                await enqueue(
+                    session,
+                    POLL_PROVIDER_RUN,
+                    f"{POLL_PROVIDER_RUN}:{RUN_ENTITY}:{run_id}",
+                    run_at=utcnow() + POLL_FIRST_DELAY,
+                    provider_run_id=run_id,
+                )
+            await record_event(
+                session,
+                RUN_STARTED_EVENT,
+                owner_id=owner_id,
+                entity_type=RUN_ENTITY,
+                entity_id=run_id,
+            )
+            await session.commit()
+    if orphaned:
+        logger.warning("provider_run_orphaned", extra={"run_id": str(run_id)})
+        await _abort(token, apify_run_id)
+        async with get_sessionmaker()() as session:
+            return _outcome(run_id, await repo.get_run(session, run_id))
+    return RunOutcome(run_id, "running")
+
+
+async def poll_provider_run(
+    run_id: uuid.UUID, *, token: SecretStr | None = None, reschedule: bool = True
+) -> RunOutcome:
+    """One poll of a ``running`` provider run (the ``listings.poll_provider_run`` job; the
+    seed script calls it with the seed ``token`` and ``reschedule=False``). Anything not
+    ``running`` is a no-op. Apify is called with no transaction open.
+
+    * READY / RUNNING: ``poll_attempts`` + 1, the cost so far is kept and, with
+      ``reschedule``, the next poll is enqueued (key scoped by attempt) after
+      :func:`poll_delay`. Past :data:`RUN_TIMEOUT` since the start the run is aborted (best
+      effort) and ``failed``/``timeout`` instead.
+    * SUCCEEDED: at most ``max_items`` items are fetched and mapped, then in one transaction
+      :func:`ingest_drafts` stores them and the cost, counts and ``succeeded`` are recorded
+      with a ``listings.provider_run_succeeded`` ops event (counts only). Counts satisfy
+      ``items == ingested + rejected + duplicates + not_visible``.
+    * FAILED / ABORTED / TIMED-OUT: ``failed`` with that status as ``error_kind`` and the
+      cost; never re-run.
+    * ``ProviderUnavailable`` propagates (the job retries); a rejected or invalid key, a
+      missing or unreadable key, or no master key fails the run (keeping the last known cost).
+    """
+    async with get_sessionmaker()() as session:
+        run = await repo.get_run(session, run_id)
+        if run is None or run.status != "running":
+            return _outcome(run_id, run)
+        owner_id, actor, apify_run_id = run.owner_id, run.actor, run.apify_run_id
+        max_items, started_at = run.max_items, run.started_at
+        if token is None:
+            if owner_id is None:
+                raise ValueError("the System seed run is polled by its script with its token")
+            failure: str | None = None
+            try:
+                token = await accounts_service.decrypt_credential(session, owner_id)
+            except ProviderKeyUnreadableError:
+                failure = "key_unreadable"
+            except CredentialsUnavailableError:
+                failure = "credentials_unavailable"
+            else:
+                failure = "no_key" if token is None else None
+            if failure is not None:
+                await session.rollback()
+                return await _fail_run(run_id, owner_id, failure)
+    if token is None or actor is None or apify_run_id is None:
+        raise RuntimeError("a running provider run has an actor, a run id and a token")
+
+    runner = get_provider_runner()
+    try:
+        state = await runner.get_run(token, apify_run_id)
+    except ProviderKeyInvalid:
+        return await _fail_run(run_id, owner_id, "key_invalid")
+    except ProviderRejected:
+        return await _fail_run(run_id, owner_id, "rejected")
+
+    if state.status in ("READY", "RUNNING"):
+        now = utcnow()
+        if started_at is not None and now - started_at >= RUN_TIMEOUT:
+            await _abort(token, apify_run_id)
+            return await _fail_run(run_id, owner_id, "timeout", cost_usd=state.usage_usd)
+        async with get_sessionmaker()() as session:
+            locked = await repo.get_run(session, run_id, for_update=True)
+            if locked is None or locked.status != "running":
+                return _outcome(run_id, locked)
+            attempts = locked.poll_attempts + 1
+            values: dict[str, Any] = {"poll_attempts": attempts}
+            if state.usage_usd is not None:
+                values["cost_usd"] = Decimal(str(state.usage_usd))  # last known cost
+            await repo.update_run(session, run_id, **values)
+            if reschedule:
+                await enqueue(
+                    session,
+                    POLL_PROVIDER_RUN,
+                    f"{POLL_PROVIDER_RUN}:{RUN_ENTITY}:{run_id}:{attempts}",
+                    run_at=now + poll_delay(attempts),
+                    provider_run_id=run_id,
+                )
+            await session.commit()
+        return RunOutcome(run_id, "running")
+
+    if state.status in TERMINAL_FAILURES:
+        kind = state.status.lower().replace("-", "_")
+        return await _fail_run(run_id, owner_id, kind, cost_usd=state.usage_usd)
+
+    # SUCCEEDED
+    if state.dataset_id is None:
+        return await _fail_run(run_id, owner_id, "no_dataset", cost_usd=state.usage_usd)
+    try:
+        items = await runner.fetch_items(token, state.dataset_id, limit=max_items)
+    except ProviderKeyInvalid:
+        return await _fail_run(run_id, owner_id, "key_invalid", cost_usd=state.usage_usd)
+    except ProviderRejected:
+        return await _fail_run(run_id, owner_id, "rejected", cost_usd=state.usage_usd)
+    items = items[:max_items]
+    item_count = len(items)
+    drafts, bad_items = get_provider_source().drafts_from_items(actor, items)
+    del items  # raw provider output is never stored
+    duplicates = item_count - len(drafts) - bad_items
+
+    async with get_sessionmaker()() as session:
+        locked = await repo.get_run(session, run_id, for_update=True)
+        if locked is None or locked.status != "running":
+            return _outcome(run_id, locked)
+        counts = await ingest_drafts(session, drafts, collected_by=owner_id)
+        tallies = {
+            "items": item_count,
+            "ingested": counts.listings,
+            "rejected": bad_items + counts.rejected,
+            "duplicates": duplicates,
+            "not_visible": counts.not_visible,
+        }
+        await repo.update_run(
+            session,
+            run_id,
+            status="succeeded",
+            dataset_id=state.dataset_id,
+            cost_usd=Decimal(str(state.usage_usd)) if state.usage_usd is not None else None,
+            finished_at=utcnow(),
+            **tallies,
+        )
+        await record_event(
+            session,
+            RUN_SUCCEEDED_EVENT,
+            owner_id=owner_id,
+            entity_type=RUN_ENTITY,
+            entity_id=run_id,
+            counts=tallies,
+        )
+        await session.commit()
+    return RunOutcome(run_id, "succeeded")
+
+
+async def reap_stale_runs() -> int:
+    """The hourly ``listings.reap_stale_runs`` job: runs nobody will finish are failed so
+    they never stay stuck. ``starting`` rows older than :data:`REAP_STARTING_AFTER` become
+    ``failed``/``start_unknown``; ``running`` rows started more than ``RUN_TIMEOUT +
+    REAP_RUNNING_GRACE`` ago (their poll gave up) are aborted (best effort) and become
+    ``failed``/``poll_exhausted``. Returns the number of rows failed."""
+    now = utcnow()
+    async with get_sessionmaker()() as session:
+        starting = await repo.stale_runs(
+            session, "starting", now - REAP_STARTING_AFTER, REAP_BATCH
+        )
+        running = await repo.stale_runs(
+            session, "running", now - RUN_TIMEOUT - REAP_RUNNING_GRACE, REAP_BATCH
+        )
+    reaped = 0
+    for run_id, owner_id, _ in starting:
+        outcome = await _fail_run(run_id, owner_id, "start_unknown", only=("starting",))
+        reaped += outcome.error_kind == "start_unknown"
+    for run_id, owner_id, apify_run_id in running:
+        await _abort(await _owner_token(owner_id), apify_run_id)
+        outcome = await _fail_run(run_id, owner_id, "poll_exhausted", only=("running",))
+        reaped += outcome.error_kind == "poll_exhausted"
+    return reaped
+
+
+async def get_provider_run(session: AsyncSession, run_id: uuid.UUID) -> ProviderRun | None:
+    """One provider run row (ids, caps, counts and cost only)."""
+    return await repo.get_run(session, run_id)
+
+
+# --------------------------------------------------------------------------- scheduling
+
+
+def collect_key(owner_id: uuid.UUID, day: date) -> str:
+    """The ``listings.collect`` job key for ``owner_id`` on the Student's local ``day``."""
+    return f"{COLLECT}:student:{owner_id}:{day.isoformat()}"
+
+
+async def collect_for_owner(owner_id: uuid.UUID) -> RunOutcome | None:
+    """The ``listings.collect`` job: one run scoped to the owner's Preferences, at most one
+    per local day (``run_key`` ``collect:<owner>:<local_date>``, the day in the Student's
+    time zone). Without role titles it records ``listings.collect_skipped``
+    (``no_preferences``) and returns None."""
+    async with get_sessionmaker()() as session:
+        prefs = await profile_service.get_preferences(session, owner_id)
+        if prefs is None or not prefs.role_titles:
+            await record_event(
+                session, SKIPPED_EVENT, owner_id=owner_id, counts={"no_preferences": 1}
+            )
+            await session.commit()
+            return None
+        params = {
+            "role_titles": list(prefs.role_titles),
+            "locations": list(prefs.locations),
+            "job_types": list(prefs.job_types),
+        }
+        day = local_day(prefs.timezone)
+    return await start_provider_run(
+        owner_id, PURPOSE_JOBS, params, run_key=f"collect:{owner_id}:{day.isoformat()}"
+    )
+
+
+async def on_provider_key_changed(session: AsyncSession, event: ProviderKeyChanged) -> None:
+    """``ProviderKeyChanged`` subscriber: a saved key creates the owner's daily
+    ``listings.collect`` schedule, or resumes a paused one, with the next run at
+    ``COLLECT_LOCAL_HOUR``:00 in the Student's time zone (an active schedule keeps its next
+    run), and enqueues today's first collection, in the saving transaction. Resuming is
+    safe: every start re-checks consent and ``provider_status``. A deleted key is handled
+    by ``accounts`` (schedules paused)."""
+    if event.removed:
+        return
+    settings = get_settings()
+    prefs = await profile_service.get_preferences(session, event.owner_id)
+    tz = prefs.timezone if prefs is not None else None
+    await upsert_owner_schedule(
+        session,
+        COLLECT,
+        event.owner_id,
+        interval=timedelta(hours=settings.collect_interval_hours),
+        next_run_at=next_local_time(tz, settings.collect_local_hour),
+    )
+    await enqueue(
+        session, COLLECT, collect_key(event.owner_id, local_day(tz)), owner_id=event.owner_id
+    )
