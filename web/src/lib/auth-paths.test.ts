@@ -29,7 +29,7 @@ test("same-origin paths pass through", () => {
   assert.equal(safeNextPath("/"), "/");
 });
 
-test("onboarding, settings, listings and feed pages are protected", () => {
+test("onboarding, settings, listings, feed and tracker pages are protected", () => {
   for (const path of [
     "/onboarding",
     "/onboarding/x",
@@ -38,10 +38,12 @@ test("onboarding, settings, listings and feed pages are protected", () => {
     "/listings",
     "/listings/0193a1b2-0000-7000-8000-000000000001",
     "/feed",
+    "/tracker",
+    "/tracker/0193a1b2-0000-7000-8000-000000000001",
   ]) {
     assert.equal(isProtectedPath(path), true, path);
   }
-  for (const path of ["/", "/login", "/signup", "/settingsx", "/listingsx", "/feedx", "/auth/error"]) {
+  for (const path of ["/", "/login", "/signup", "/settingsx", "/listingsx", "/feedx", "/trackerx", "/auth/error"]) {
     assert.equal(isProtectedPath(path), false, path);
   }
 });

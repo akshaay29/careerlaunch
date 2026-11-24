@@ -129,3 +129,7 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-3-4-see-why-a-listing-scored-what-it-did.md`
   summary: Make `test_listing_search_perf.py` robust on loaded machines (e.g. compare against a calibration query, or run it only in CI with a fixed budget), for Story 4.4.
   evidence: On the developer's OneDrive-synced laptop the two-word query measured 242 ms, then 399 ms and 623 ms under background load with no change to the search code, so the 500 ms assertion fails intermittently locally.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-4-1-save-a-listing-and-track-its-status.md`
+  summary: Show the saved state on feed, search and browse cards (a batch by-listing lookup or `application_id` on list items), and add a DB-role RLS test for `applications` and `application_status_history`.
+  evidence: Cards render Save without knowing the saved state; only API-level ownership is tested.

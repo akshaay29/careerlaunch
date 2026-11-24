@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 
 import type { ListingOut } from "@/api";
+import { SaveListingButton } from "@/components/tracker/save-listing-button";
 import { listingDates, listingMeta, listingPath } from "@/lib/listings";
 
 import { ApplyLink, ListingAttribution } from "./listing-attribution";
@@ -23,7 +24,7 @@ export function SkillChips({ skills }: { skills: ListingOut["skills"] }) {
 /**
  * One Listing in the browse list or the feed. All scraped text is rendered as plain text.
  * `badge` (the Match Score with "Why this score", in the feed and search results) is shown
- * beside the title.
+ * beside the title. "Save" (idempotent) turns into "Saved · Open" once the Listing is saved.
  */
 export function ListingCard({ listing, badge }: { listing: ListingOut; badge?: ReactNode }) {
   const dates = listingDates(listing);
@@ -45,7 +46,10 @@ export function ListingCard({ listing, badge }: { listing: ListingOut; badge?: R
       <SkillChips skills={listing.skills} />
       <div className="flex flex-wrap items-end justify-between gap-3">
         <ListingAttribution listing={listing} />
-        <ApplyLink listing={listing} />
+        <div className="flex flex-wrap items-start gap-2">
+          <SaveListingButton listingId={listing.id} />
+          <ApplyLink listing={listing} />
+        </div>
       </div>
     </article>
   );

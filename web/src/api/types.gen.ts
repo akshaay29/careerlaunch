@@ -18,6 +18,124 @@ export type AccountDeletion = {
 };
 
 /**
+ * ApplicationForListing
+ *
+ * Your Application for a Listing, or null when you have not saved it.
+ */
+export type ApplicationForListing = {
+    /**
+     * Application Id
+     */
+    application_id: string | null;
+};
+
+/**
+ * ApplicationHistory
+ *
+ * Status changes, newest first.
+ */
+export type ApplicationHistory = {
+    /**
+     * Items
+     */
+    items: Array<StatusChange>;
+};
+
+/**
+ * ApplicationOut
+ *
+ * One Application. ``title``, ``company``, ``url`` and ``deadline`` are the snapshot taken
+ * when the Listing was saved (scraped, untrusted text: render it as plain text).
+ * ``listing_available`` is false once the Listing is gone, expired or no longer visible to
+ * you. ``allowed_next`` lists the Statuses it may move to now (empty when none). ``today``
+ * is your local date (Preferences time zone): the latest allowed ``applied_on``.
+ */
+export type ApplicationOut = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Listing Id
+     */
+    listing_id: string | null;
+    /**
+     * Listing Available
+     */
+    listing_available: boolean;
+    /**
+     * Status
+     */
+    status: 'saved' | 'applied' | 'interview' | 'offer' | 'rejected' | 'withdrawn';
+    /**
+     * Allowed Next
+     */
+    allowed_next: Array<'saved' | 'applied' | 'interview' | 'offer' | 'rejected' | 'withdrawn'>;
+    /**
+     * Title
+     */
+    title: string;
+    /**
+     * Company
+     */
+    company: string;
+    /**
+     * Url
+     */
+    url: string;
+    /**
+     * Deadline
+     */
+    deadline: string | null;
+    /**
+     * Notes
+     */
+    notes: string | null;
+    /**
+     * Applied On
+     */
+    applied_on: string | null;
+    /**
+     * Resume Id
+     */
+    resume_id: string | null;
+    /**
+     * Created At
+     */
+    created_at: string;
+    /**
+     * Updated At
+     */
+    updated_at: string;
+    /**
+     * Today
+     */
+    today: string;
+};
+
+/**
+ * ApplicationUpdate
+ *
+ * A partial update: only the fields sent are changed. ``notes`` is trimmed (empty clears
+ * it, 4,000 characters at most); ``applied_on`` is from 2000-01-01 to today; ``resume_id`` must
+ * be one of your Resume versions, and null clears it.
+ */
+export type ApplicationUpdate = {
+    /**
+     * Notes
+     */
+    notes?: string | null;
+    /**
+     * Applied On
+     */
+    applied_on?: string | null;
+    /**
+     * Resume Id
+     */
+    resume_id?: string | null;
+};
+
+/**
  * Body_uploadDocument
  */
 export type BodyUploadDocument = {
@@ -890,6 +1008,16 @@ export type RightsNotice = {
 };
 
 /**
+ * SaveListingIn
+ */
+export type SaveListingIn = {
+    /**
+     * Listing Id
+     */
+    listing_id: string;
+};
+
+/**
  * ScoreBreakdown
  *
  * Why a Listing scored what it did. The components' ``points`` sum to the score. Skills
@@ -1068,6 +1196,36 @@ export type SpendCapsOut = {
      * Is Default
      */
     is_default: boolean;
+};
+
+/**
+ * StatusChange
+ *
+ * One Status change. ``from_status`` is null for the save.
+ */
+export type StatusChange = {
+    /**
+     * From Status
+     */
+    from_status: 'saved' | 'applied' | 'interview' | 'offer' | 'rejected' | 'withdrawn' | null;
+    /**
+     * To Status
+     */
+    to_status: 'saved' | 'applied' | 'interview' | 'offer' | 'rejected' | 'withdrawn';
+    /**
+     * Changed At
+     */
+    changed_at: string;
+};
+
+/**
+ * TransitionIn
+ */
+export type TransitionIn = {
+    /**
+     * Status
+     */
+    status: 'saved' | 'applied' | 'interview' | 'offer' | 'rejected' | 'withdrawn';
 };
 
 /**
@@ -2066,3 +2224,266 @@ export type GetFeedResponses = {
 };
 
 export type GetFeedResponse = GetFeedResponses[keyof GetFeedResponses];
+
+export type SaveListingData = {
+    body: SaveListingIn;
+    path?: never;
+    query?: never;
+    url: '/api/v1/applications';
+};
+
+export type SaveListingErrors = {
+    /**
+     * Not signed in
+     */
+    401: unknown;
+    /**
+     * No such Listing for this Student, or it expired
+     */
+    404: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type SaveListingError = SaveListingErrors[keyof SaveListingErrors];
+
+export type SaveListingResponses = {
+    /**
+     * Already saved: the existing Application
+     */
+    200: ApplicationOut;
+    /**
+     * Successful Response
+     */
+    201: ApplicationOut;
+};
+
+export type SaveListingResponse = SaveListingResponses[keyof SaveListingResponses];
+
+export type GetApplicationForListingData = {
+    body?: never;
+    path: {
+        /**
+         * Listing Id
+         */
+        listing_id: string;
+    };
+    query?: never;
+    url: '/api/v1/applications/by-listing/{listing_id}';
+};
+
+export type GetApplicationForListingErrors = {
+    /**
+     * Not signed in
+     */
+    401: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type GetApplicationForListingError = GetApplicationForListingErrors[keyof GetApplicationForListingErrors];
+
+export type GetApplicationForListingResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApplicationForListing;
+};
+
+export type GetApplicationForListingResponse = GetApplicationForListingResponses[keyof GetApplicationForListingResponses];
+
+export type DeleteApplicationData = {
+    body?: never;
+    path: {
+        /**
+         * Application Id
+         */
+        application_id: string;
+    };
+    query?: never;
+    url: '/api/v1/applications/{application_id}';
+};
+
+export type DeleteApplicationErrors = {
+    /**
+     * Not signed in
+     */
+    401: unknown;
+    /**
+     * No such Application for this Student
+     */
+    404: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type DeleteApplicationError = DeleteApplicationErrors[keyof DeleteApplicationErrors];
+
+export type DeleteApplicationResponses = {
+    /**
+     * Successful Response
+     */
+    204: void;
+};
+
+export type DeleteApplicationResponse = DeleteApplicationResponses[keyof DeleteApplicationResponses];
+
+export type GetApplicationData = {
+    body?: never;
+    path: {
+        /**
+         * Application Id
+         */
+        application_id: string;
+    };
+    query?: never;
+    url: '/api/v1/applications/{application_id}';
+};
+
+export type GetApplicationErrors = {
+    /**
+     * Not signed in
+     */
+    401: unknown;
+    /**
+     * No such Application for this Student
+     */
+    404: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type GetApplicationError = GetApplicationErrors[keyof GetApplicationErrors];
+
+export type GetApplicationResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApplicationOut;
+};
+
+export type GetApplicationResponse = GetApplicationResponses[keyof GetApplicationResponses];
+
+export type UpdateApplicationData = {
+    body: ApplicationUpdate;
+    path: {
+        /**
+         * Application Id
+         */
+        application_id: string;
+    };
+    query?: never;
+    url: '/api/v1/applications/{application_id}';
+};
+
+export type UpdateApplicationErrors = {
+    /**
+     * Not signed in
+     */
+    401: unknown;
+    /**
+     * No such Application for this Student
+     */
+    404: unknown;
+    /**
+     * Notes over 4,000 characters, a future applied date, or a Resume that is not yours
+     */
+    422: unknown;
+};
+
+export type UpdateApplicationResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApplicationOut;
+};
+
+export type UpdateApplicationResponse = UpdateApplicationResponses[keyof UpdateApplicationResponses];
+
+export type TransitionApplicationData = {
+    body: TransitionIn;
+    path: {
+        /**
+         * Application Id
+         */
+        application_id: string;
+    };
+    query?: never;
+    url: '/api/v1/applications/{application_id}/status';
+};
+
+export type TransitionApplicationErrors = {
+    /**
+     * Not signed in
+     */
+    401: unknown;
+    /**
+     * No such Application for this Student
+     */
+    404: unknown;
+    /**
+     * The move is not allowed; ``allowed`` lists the next Statuses
+     */
+    409: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type TransitionApplicationError = TransitionApplicationErrors[keyof TransitionApplicationErrors];
+
+export type TransitionApplicationResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApplicationOut;
+};
+
+export type TransitionApplicationResponse = TransitionApplicationResponses[keyof TransitionApplicationResponses];
+
+export type GetApplicationHistoryData = {
+    body?: never;
+    path: {
+        /**
+         * Application Id
+         */
+        application_id: string;
+    };
+    query?: never;
+    url: '/api/v1/applications/{application_id}/history';
+};
+
+export type GetApplicationHistoryErrors = {
+    /**
+     * Not signed in
+     */
+    401: unknown;
+    /**
+     * No such Application for this Student
+     */
+    404: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type GetApplicationHistoryError = GetApplicationHistoryErrors[keyof GetApplicationHistoryErrors];
+
+export type GetApplicationHistoryResponses = {
+    /**
+     * Successful Response
+     */
+    200: ApplicationHistory;
+};
+
+export type GetApplicationHistoryResponse = GetApplicationHistoryResponses[keyof GetApplicationHistoryResponses];
