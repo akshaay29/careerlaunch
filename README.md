@@ -528,6 +528,25 @@ not the whole pool). `/listings?q=...` runs the same search in the web app.
   time. `api/tests/test_listing_search_perf.py` seeds about 30,000 Listings and asserts typical
   queries finish in under 500 ms.
 
+## Why this score (FR-9, SM-4, Story 3.4)
+
+- `GET /api/v1/listings/{id}/match` (`getListingMatch`) returns the Student's stored score and
+  breakdown when they have one for a visible, unexpired Listing (`source: "stored"`), otherwise
+  scores it now with the same `score()` (`source: "on_request"`). It never stores anything.
+- `GET /api/v1/matches?ids=…` (`getMatchScores`, at most 50 ids, duplicates count once) returns
+  `{listing_id, score, source}` for each id the Student can see; others are left out. The web
+  app calls it once per search results page; on-request scores are never stored.
+- `POST /api/v1/listings/{id}/match/viewed` (`recordBreakdownViewed`, 204) records one
+  `matching.breakdown_opened` ops event with the Student's `owner_id` and `{"opened": 1}`: no
+  Listing, score or skill. The web app sends it only after the breakdown has loaded, so the
+  events count successful opens only (an open whose breakdown fails to load is not counted).
+- **Metrics note (SM-4, share of Students who open breakdowns):** the numerator is a distinct
+  count of `owner_id` over these events, e.g.
+  `SELECT count(DISTINCT owner_id) FROM app.ops_events WHERE kind = 'matching.breakdown_opened'
+  AND created_at >= now() - interval '30 days'`, divided by the number of active Students in
+  the same window. A deleted Student's events keep their counts with `owner_id` NULL, so they
+  drop out of the distinct count.
+
 ## CI (`.github/workflows/ci.yml`)
 
 On every push and PR: Postgres 17 service + Supabase roles SQL → `alembic upgrade head` →

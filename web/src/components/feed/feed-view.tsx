@@ -6,6 +6,7 @@ import { useEffect, useId, useRef, useState } from "react";
 
 import { type Feed, type FeedItem, getFeed } from "@/api";
 import { ListingCard } from "@/components/listings/listing-card";
+import { MatchScoreBadge } from "@/components/matching/score-breakdown-view";
 import { Button } from "@/components/ui/button";
 import { LOGIN_PATH } from "@/lib/auth-paths";
 import {
@@ -17,7 +18,6 @@ import {
   feedNotice,
   feedQuery,
   mergeFeedPages,
-  scoreBadge,
 } from "@/lib/feed";
 import { SETTINGS_PREFERENCES_PATH } from "@/lib/preferences";
 import { SETTINGS_SKILLS_PATH } from "@/lib/skill-profile";
@@ -76,18 +76,15 @@ function BelowToggle({ showBelow }: { showBelow: boolean }) {
   );
 }
 
-/** The score badge and, when it applies, a muted "Below your threshold" label. */
+/** The score badge with "Why this score" and, when it applies, a muted "Below your
+ * threshold" label. */
 function ScoreBadge({ item }: { item: FeedItem }) {
   return (
-    <div className="flex shrink-0 flex-col items-end gap-0.5">
-      <span className="rounded-full border px-2 py-0.5 text-sm font-medium tabular-nums">
-        <span className="sr-only">Match Score </span>
-        {scoreBadge(item.score)}
-      </span>
+    <MatchScoreBadge listingId={item.id} score={item.score}>
       {item.below_threshold ? (
         <span className="text-xs text-muted-foreground">{BELOW_THRESHOLD_LABEL}</span>
       ) : null}
-    </div>
+    </MatchScoreBadge>
   );
 }
 

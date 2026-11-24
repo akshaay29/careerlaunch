@@ -38,12 +38,34 @@ class ScoreBreakdown(BaseModel):
     components: list[ScoreComponent]
 
 
+MatchSource = Literal["stored", "on_request"]
+
+
 class ListingMatch(BaseModel):
-    """The Match Score (0-100) of one Listing for the signed-in Student, computed on request."""
+    """The Match Score (0-100) of one Listing for the signed-in Student, with its breakdown.
+    ``source``: ``stored`` is the Student's stored score; ``on_request`` was computed just now
+    with the same scorer and is not stored."""
 
     listing_id: uuid.UUID
     score: int = Field(ge=0, le=100)
     breakdown: ScoreBreakdown
+    source: MatchSource
+
+
+class MatchScoreItem(BaseModel):
+    """The Match Score (0-100) of one Listing, without its breakdown (``source`` as on
+    ``ListingMatch``)."""
+
+    listing_id: uuid.UUID
+    score: int = Field(ge=0, le=100)
+    source: MatchSource
+
+
+class MatchScores(BaseModel):
+    """Match Scores of the requested Listings that the Student can see and that have not
+    expired, in request order. Unknown, expired or hidden Listings are left out."""
+
+    items: list[MatchScoreItem]
 
 
 class FeedItem(ListingOut):

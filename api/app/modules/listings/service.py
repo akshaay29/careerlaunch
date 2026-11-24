@@ -493,6 +493,15 @@ async def get_scoring_input(
     if row is None:
         raise NotFoundError(NOT_FOUND_DETAIL)
     title, skills, vocab_version, lexemes = row
+    return _scoring_input(title, skills, vocab_version, lexemes)
+
+
+def _scoring_input(
+    title: str | None,
+    skills: Iterable[str | None],
+    vocab_version: str,
+    lexemes: Iterable[str | None],
+) -> ScoringInput:
     # Array elements may be NULL; drop them (and empty strings) so the scorer never sees one.
     return ScoringInput(
         title or "",
@@ -500,6 +509,19 @@ async def get_scoring_input(
         vocab_version,
         tuple(sorted({lx for lx in lexemes if lx})),
     )
+
+
+async def scoring_inputs(
+    session: AsyncSession, actor_id: uuid.UUID, listing_ids: Iterable[uuid.UUID]
+) -> dict[uuid.UUID, ScoringInput]:
+    """``{listing_id: ScoringInput}`` of the given Listings visible to ``actor_id`` and not
+    expired (Story 3.4), in one query; others (unknown, expired, private to someone else) are
+    silently left out. The same visibility as :func:`get_scoring_input`."""
+    rows = await repo.get_visible_scoring_inputs(session, actor_id, sorted(set(listing_ids)))
+    return {
+        listing_id: _scoring_input(title, skills, vocab_version, lexemes)
+        for listing_id, title, skills, vocab_version, lexemes in rows
+    }
 
 
 @dataclass(frozen=True)
@@ -552,16 +574,7 @@ async def candidate_set(
         cap=cap,
     )
     return [
-        CandidateInput(
-            listing_id,
-            # Array elements may be NULL; drop them (and empty strings), as get_scoring_input.
-            ScoringInput(
-                title,
-                tuple(sorted({s for s in skills if s})),
-                vocab_version,
-                tuple(sorted({lx for lx in lexemes if lx})),
-            ),
-        )
+        CandidateInput(listing_id, _scoring_input(title, skills, vocab_version, lexemes))
         for listing_id, title, skills, vocab_version, lexemes in rows
     ]
 

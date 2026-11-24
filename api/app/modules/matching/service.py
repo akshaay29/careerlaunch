@@ -1,6 +1,9 @@
 """matching.service: loads the scoring inputs and calls the pure scorer (AD-9).
 
-* Story 3.1: :func:`match_listing` scores one Listing on request and stores nothing.
+* Story 3.1: :func:`match_listing` scores one Listing on request and stores nothing. Story
+  3.4: it returns the Student's stored score and breakdown when one exists for a Listing they
+  can still see; :func:`match_scores` is the batch (search results, no breakdowns) and
+  :func:`record_breakdown_opened` the count-only "Why this score" event.
 * Story 3.3: :func:`feed` is the Student's ranked feed: stored scores (``ready``), or, before
   any exist, the top candidates scored on request and never stored (``provisional``), or
   ``setup_needed``.
@@ -24,6 +27,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -39,7 +43,7 @@ from app.core.jobs import DEFAULT_QUEUE, PRIORITY_QUEUE, enqueue, job_pending
 from app.core.ops import record_event
 from app.modules.listings import service as listings_service
 from app.modules.matching import repo
-from app.modules.matching.schemas import ScoreBreakdown
+from app.modules.matching.schemas import MatchSource, ScoreBreakdown
 from app.modules.matching.scoring import ScoringListing, ScoringProfile, score
 from app.modules.matching.tasks import RECOMPUTE
 from app.modules.matching.weights import current_weights
@@ -53,11 +57,26 @@ RECOMPUTE_EVENT = "matching.recompute"
 SUPERSEDED_EVENT = "matching.recompute_superseded"
 
 
+BREAKDOWN_OPENED_EVENT = "matching.breakdown_opened"
+# The most distinct Listing ids one ``getMatchScores`` call may ask for, and the most raw
+# ``ids`` values (duplicates included) the router accepts before de-duplicating.
+MAX_BATCH_IDS = 50
+MAX_BATCH_RAW_IDS = 200
+
+
 @dataclass(frozen=True)
 class MatchResult:
     listing_id: uuid.UUID
     score: int
     breakdown: ScoreBreakdown
+    source: MatchSource = "on_request"
+
+
+@dataclass(frozen=True)
+class ScoreItem:
+    listing_id: uuid.UUID
+    score: int
+    source: MatchSource
 
 
 def build_profile(
@@ -92,14 +111,79 @@ def _scoring_listing(listing: listings_service.ScoringInput) -> ScoringListing:
     )
 
 
+def _stored_breakdown(value: int, raw: object) -> ScoreBreakdown | None:
+    """The stored breakdown, or None when it is not a valid one whose points sum to the
+    stored score (the Listing is then scored on request instead)."""
+    try:
+        breakdown = ScoreBreakdown.model_validate(raw)
+    except ValidationError:
+        return None
+    if sum(c.points for c in breakdown.components) != value:
+        return None
+    return breakdown
+
+
 async def match_listing(
     session: AsyncSession, owner_id: uuid.UUID, listing_id: uuid.UUID
 ) -> MatchResult:
-    """Score one Listing visible to ``owner_id`` (``NotFoundError`` otherwise). Read-only."""
+    """The Match Score of one Listing visible to ``owner_id`` and not expired
+    (``NotFoundError`` otherwise): the stored score and breakdown when the Student has one
+    (``stored``), else scored now with the one scorer (``on_request``). Read-only: nothing is
+    ever stored here."""
+    stored = await repo.shown_scores(session, owner_id, [listing_id])
+    if listing_id in stored:
+        value, raw = stored[listing_id]
+        breakdown = _stored_breakdown(value, raw)
+        if breakdown is not None:
+            return MatchResult(listing_id, value, breakdown, "stored")
     listing = await listings_service.get_scoring_input(session, owner_id, listing_id)
     profile = await scoring_profile(session, owner_id)
     value, breakdown = score(profile, _scoring_listing(listing), current_weights())
-    return MatchResult(listing_id, value, breakdown)
+    return MatchResult(listing_id, value, breakdown, "on_request")
+
+
+async def match_scores(
+    session: AsyncSession, owner_id: uuid.UUID, listing_ids: Iterable[uuid.UUID]
+) -> list[ScoreItem]:
+    """The Match Scores of the given Listings (de-duplicated, at most
+    :data:`MAX_BATCH_IDS`, else :class:`InvalidInputError`) that are visible to ``owner_id``
+    and not expired, in request order; the others are silently left out. Stored scores come
+    from one query (a stored row whose breakdown is invalid or does not sum to its score is
+    scored now instead, as in :func:`match_listing`); the rest are scored now in one batch
+    (one scoring-input query, one profile load) and never stored. Read-only."""
+    ids = list(dict.fromkeys(listing_ids))
+    if len(ids) > MAX_BATCH_IDS:
+        raise InvalidInputError(
+            ["query", "ids"], f"Ask for at most {MAX_BATCH_IDS} Listings at a time."
+        )
+    if not ids:
+        return []
+    stored = await repo.shown_scores(session, owner_id, ids)
+    found: dict[uuid.UUID, tuple[int, MatchSource]] = {
+        listing_id: (value, "stored")
+        for listing_id, (value, raw) in stored.items()
+        if _stored_breakdown(value, raw) is not None
+    }
+    rest = [listing_id for listing_id in ids if listing_id not in found]
+    inputs = await listings_service.scoring_inputs(session, owner_id, rest) if rest else {}
+    if inputs:
+        profile = await scoring_profile(session, owner_id)
+        weights = current_weights()
+        for listing_id, listing in inputs.items():
+            value, _ = score(profile, _scoring_listing(listing), weights)
+            found[listing_id] = (value, "on_request")
+    return [ScoreItem(lid, *found[lid]) for lid in ids if lid in found]
+
+
+async def record_breakdown_opened(
+    session: AsyncSession, owner_id: uuid.UUID, listing_id: uuid.UUID
+) -> None:
+    """Record that the Student opened "Why this score" for a Listing they can see
+    (``NotFoundError`` otherwise, recording nothing): one ``matching.breakdown_opened`` ops
+    event with the Student's ``owner_id`` and ``{"opened": 1}``, and no Listing, score or
+    skill. Never commits."""
+    await listings_service.get_listing(session, owner_id, listing_id)
+    await record_event(session, BREAKDOWN_OPENED_EVENT, owner_id=owner_id, counts={"opened": 1})
 
 
 # --------------------------------------------------------------------------- stale (Story 3.2)

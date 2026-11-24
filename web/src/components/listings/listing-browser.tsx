@@ -2,11 +2,19 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { type FormEvent, useEffect, useId, useState } from "react";
+import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 
-import { type ListingOut, listListings, searchListings } from "@/api";
+import {
+  type ListingOut,
+  type MatchScoreItem,
+  getMatchScores,
+  listListings,
+  searchListings,
+} from "@/api";
+import { MatchScoreBadge } from "@/components/matching/score-breakdown-view";
 import { Button } from "@/components/ui/button";
 import { LOGIN_PATH } from "@/lib/auth-paths";
+import { matchScoreIds, mergeScores } from "@/lib/breakdown";
 import {
   LISTINGS_EMPTY_MESSAGE,
   SEARCH_PAGE_SIZE,
@@ -62,6 +70,19 @@ async function fetchSearch(q: string, offset: number): Promise<Load> {
     return { kind: "error", message: `HTTP ${response?.status ?? "?"}` };
   } catch {
     return { kind: "error", message: "API unreachable" };
+  }
+}
+
+/** The Student's Match Scores of one search results page (one batch call). Optional: on any
+ * failure there are simply no badges. */
+async function fetchScores(items: ListingOut[]): Promise<MatchScoreItem[]> {
+  const ids = matchScoreIds(items.map((item) => item.id));
+  if (ids.length === 0) return [];
+  try {
+    const { data } = await getMatchScores({ query: { ids } });
+    return data?.items ?? [];
+  } catch {
+    return [];
   }
 }
 
@@ -152,12 +173,43 @@ export function ListingBrowser({ query = "" }: { query?: string }) {
   const [load, setLoad] = useState<Load>({ kind: "loading" });
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  // Search results only: Match Scores by Listing id (browsing shows none).
+  // Scores belong to the query they were fetched for: another query's scores are never shown.
+  const [scores, setScores] = useState<{ query: string; byId: Record<string, number> }>({
+    query,
+    byId: {},
+  });
+  const shownScores = scores.query === query ? scores.byId : {};
+  // The query being shown (null once unmounted): a response for any other query is dropped.
+  const current = useRef<string | null>(query);
+
+  useEffect(() => {
+    current.current = query;
+    return () => {
+      current.current = null;
+    };
+  }, [query]);
+
+  /** Fetches the scores of a search results page after it is shown (search only). */
+  function scorePage(forQuery: string, items: ListingOut[]) {
+    if (!forQuery) return;
+    void fetchScores(items).then((found) => {
+      if (current.current !== forQuery) return;
+      setScores((prev) => ({
+        query: forQuery,
+        byId: mergeScores(prev.query === forQuery ? prev.byId : {}, found),
+      }));
+    });
+  }
 
   useEffect(() => {
     if (!usable) return;
     let active = true;
-    fetchPage(query).then((next) => {
-      if (active) setLoad(next);
+    const forQuery = query;
+    fetchPage(forQuery).then((next) => {
+      if (!active) return;
+      setLoad(next);
+      if (next.kind === "ok") scorePage(forQuery, next.items);
     });
     return () => {
       active = false;
@@ -165,18 +217,24 @@ export function ListingBrowser({ query = "" }: { query?: string }) {
   }, [query, usable]);
 
   async function retry() {
+    const forQuery = query;
     setBusy(true);
-    const next = await fetchPage(query);
+    const next = await fetchPage(forQuery);
+    if (current.current !== forQuery) return;
     setBusy(false);
     setLoad(next);
+    if (next.kind === "ok") scorePage(forQuery, next.items);
   }
 
   async function loadMore(from: Next) {
+    const forQuery = query;
     setBusy(true);
     setMessage(null);
-    const next = await fetchPage(query, from);
+    const next = await fetchPage(forQuery, from);
+    if (current.current !== forQuery) return;
     setBusy(false);
     if (next.kind === "ok") {
+      scorePage(forQuery, next.items);
       setLoad((prev) =>
         prev.kind === "ok"
           ? { kind: "ok", items: mergeListingPages(prev.items, next.items), next: next.next }
@@ -261,7 +319,14 @@ export function ListingBrowser({ query = "" }: { query?: string }) {
       <ul className="flex flex-col gap-3">
         {items.map((listing) => (
           <li key={listing.id}>
-            <ListingCard listing={listing} />
+            <ListingCard
+              listing={listing}
+              badge={
+                query && listing.id in shownScores ? (
+                  <MatchScoreBadge listingId={listing.id} score={shownScores[listing.id]} />
+                ) : undefined
+              }
+            />
           </li>
         ))}
       </ul>

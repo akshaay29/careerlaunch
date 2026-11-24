@@ -2,7 +2,7 @@
 
 import { type Client, type ClientMeta, formDataBodySerializer, type Options as Options2, type RequestResult, type TDataShape } from './client';
 import { client } from './client.gen';
-import type { ActivateResumeData, ActivateResumeErrors, ActivateResumeResponses, DeleteDocumentData, DeleteDocumentErrors, DeleteDocumentResponses, DeleteMeData, DeleteMeErrors, DeleteMeResponses, DeleteProviderKeyData, DeleteProviderKeyResponses, DeleteResumeData, DeleteResumeErrors, DeleteResumeResponses, EditSkillProfileData, EditSkillProfileErrors, EditSkillProfileResponses, GetAdminMeData, GetAdminMeResponses, GetDocumentDownloadData, GetDocumentDownloadErrors, GetDocumentDownloadResponses, GetFeedData, GetFeedErrors, GetFeedResponses, GetHealthData, GetHealthResponses, GetListingData, GetListingErrors, GetListingMatchData, GetListingMatchErrors, GetListingMatchResponses, GetListingResponses, GetMeData, GetMeResponses, GetPreferencesData, GetPreferencesResponses, GetProviderKeyData, GetProviderKeyResponses, GetProviderUsageData, GetProviderUsageResponses, GetResumeDownloadData, GetResumeDownloadErrors, GetResumeDownloadResponses, GetSkillProfileData, GetSkillProfileResponses, GetSpendCapsData, GetSpendCapsResponses, GrantConsentData, GrantConsentErrors, GrantConsentResponses, ListConsentsData, ListConsentsResponses, ListDegreesData, ListDegreesResponses, ListDocumentsData, ListDocumentsErrors, ListDocumentsResponses, ListListingsData, ListListingsErrors, ListListingsResponses, ListResumesData, ListResumesErrors, ListResumesResponses, PutProviderKeyData, PutProviderKeyErrors, PutProviderKeyResponses, PutSpendCapsData, PutSpendCapsErrors, PutSpendCapsResponses, ResetSkillProfileData, ResetSkillProfileResponses, RevokeConsentData, RevokeConsentErrors, RevokeConsentResponses, SavePreferencesData, SavePreferencesErrors, SavePreferencesResponses, SearchListingsData, SearchListingsErrors, SearchListingsResponses, SuggestSkillsData, SuggestSkillsErrors, SuggestSkillsResponses, UploadDocumentData, UploadDocumentErrors, UploadDocumentResponses, UploadResumeData, UploadResumeErrors, UploadResumeResponses } from './types.gen';
+import type { ActivateResumeData, ActivateResumeErrors, ActivateResumeResponses, DeleteDocumentData, DeleteDocumentErrors, DeleteDocumentResponses, DeleteMeData, DeleteMeErrors, DeleteMeResponses, DeleteProviderKeyData, DeleteProviderKeyResponses, DeleteResumeData, DeleteResumeErrors, DeleteResumeResponses, EditSkillProfileData, EditSkillProfileErrors, EditSkillProfileResponses, GetAdminMeData, GetAdminMeResponses, GetDocumentDownloadData, GetDocumentDownloadErrors, GetDocumentDownloadResponses, GetFeedData, GetFeedErrors, GetFeedResponses, GetHealthData, GetHealthResponses, GetListingData, GetListingErrors, GetListingMatchData, GetListingMatchErrors, GetListingMatchResponses, GetListingResponses, GetMatchScoresData, GetMatchScoresErrors, GetMatchScoresResponses, GetMeData, GetMeResponses, GetPreferencesData, GetPreferencesResponses, GetProviderKeyData, GetProviderKeyResponses, GetProviderUsageData, GetProviderUsageResponses, GetResumeDownloadData, GetResumeDownloadErrors, GetResumeDownloadResponses, GetSkillProfileData, GetSkillProfileResponses, GetSpendCapsData, GetSpendCapsResponses, GrantConsentData, GrantConsentErrors, GrantConsentResponses, ListConsentsData, ListConsentsResponses, ListDegreesData, ListDegreesResponses, ListDocumentsData, ListDocumentsErrors, ListDocumentsResponses, ListListingsData, ListListingsErrors, ListListingsResponses, ListResumesData, ListResumesErrors, ListResumesResponses, PutProviderKeyData, PutProviderKeyErrors, PutProviderKeyResponses, PutSpendCapsData, PutSpendCapsErrors, PutSpendCapsResponses, RecordBreakdownViewedData, RecordBreakdownViewedErrors, RecordBreakdownViewedResponses, ResetSkillProfileData, ResetSkillProfileResponses, RevokeConsentData, RevokeConsentErrors, RevokeConsentResponses, SavePreferencesData, SavePreferencesErrors, SavePreferencesResponses, SearchListingsData, SearchListingsErrors, SearchListingsResponses, SuggestSkillsData, SuggestSkillsErrors, SuggestSkillsResponses, UploadDocumentData, UploadDocumentErrors, UploadDocumentResponses, UploadResumeData, UploadResumeErrors, UploadResumeResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -390,12 +390,38 @@ export const getProviderUsage = <ThrowOnError extends boolean = false>(options?:
  * Get Listing Match
  *
  * The Match Score (0-100) of one Listing you can see, with its breakdown: matched and
- * missing skills and each component's points out of its maximum. Computed now; not
- * stored.
+ * missing skills and each component's points out of its maximum. My stored score when I
+ * have one (``stored``); otherwise computed now and not stored (``on_request``).
  */
 export const getListingMatch = <ThrowOnError extends boolean = false>(options: Options<GetListingMatchData, ThrowOnError>): RequestResult<GetListingMatchResponses, GetListingMatchErrors, ThrowOnError> => (options.client ?? client).get<GetListingMatchResponses, GetListingMatchErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/api/v1/listings/{listing_id}/match',
+    ...options
+});
+
+/**
+ * Record Breakdown Viewed
+ *
+ * Count that I opened "Why this score" for a Listing I can see. Only the count is
+ * recorded: no Listing, score or skill.
+ */
+export const recordBreakdownViewed = <ThrowOnError extends boolean = false>(options: Options<RecordBreakdownViewedData, ThrowOnError>): RequestResult<RecordBreakdownViewedResponses, RecordBreakdownViewedErrors, ThrowOnError> => (options.client ?? client).post<RecordBreakdownViewedResponses, RecordBreakdownViewedErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/v1/listings/{listing_id}/match/viewed',
+    ...options
+});
+
+/**
+ * Get Match Scores
+ *
+ * My Match Scores (no breakdowns) for up to 50 distinct Listings, e.g. one page of
+ * search results. Duplicates count once (at most 200 values in all); Listings I cannot see, expired or unknown ones are left
+ * out. Stored scores are used where I have them; the rest are computed now and not
+ * stored.
+ */
+export const getMatchScores = <ThrowOnError extends boolean = false>(options?: Options<GetMatchScoresData, ThrowOnError>): RequestResult<GetMatchScoresResponses, GetMatchScoresErrors, ThrowOnError> => (options?.client ?? client).get<GetMatchScoresResponses, GetMatchScoresErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/v1/matches',
     ...options
 });
 

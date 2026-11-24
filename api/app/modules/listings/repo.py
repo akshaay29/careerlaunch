@@ -377,6 +377,27 @@ async def get_visible_scoring_input(
     return row[0], list(row[1] or []), row[2], list(row[3] or [])
 
 
+async def get_visible_scoring_inputs(
+    session: AsyncSession, actor_id: uuid.UUID, listing_ids: list[uuid.UUID]
+) -> list[tuple[uuid.UUID, str, list[str], str, list[str]]]:
+    """``(id, title, skills, vocab_version, search_doc lexemes)`` of the Listings of
+    ``listing_ids`` visible to ``actor_id`` and not expired, in one query (others are left
+    out)."""
+    if not listing_ids:
+        return []
+    stmt = select(
+        Listing.id,
+        Listing.title,
+        Listing.skills,
+        Listing.vocab_version,
+        func.tsvector_to_array(Listing.search_doc),
+    ).where(Listing.id.in_(listing_ids), _visible_to(actor_id), Listing.expired_at.is_(None))
+    return [
+        (row[0], row[1] or "", list(row[2] or []), row[3], list(row[4] or []))
+        for row in (await session.execute(stmt)).all()
+    ]
+
+
 MANUAL_SOURCE = "manual"
 
 

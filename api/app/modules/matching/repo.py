@@ -272,3 +272,29 @@ async def has_scores(
     if below is not None:
         stmt = stmt.where(MatchScore.score < below)
     return bool((await session.execute(select(exists(stmt)))).scalar())
+
+
+# --------------------------------------------------------------------------- breakdowns (3.4)
+
+
+async def shown_scores(
+    session: AsyncSession, owner_id: uuid.UUID, listing_ids: Sequence[uuid.UUID]
+) -> dict[uuid.UUID, tuple[int, dict[str, Any]]]:
+    """``{listing_id: (score, breakdown)}`` of the owner's stored scores for the given
+    Listings that are visible to them and not expired (the feed's read-time guard), in one
+    query. A stale row of an expired or hidden Listing is left out."""
+    if not listing_ids:
+        return {}
+    stmt = (
+        select(MatchScore.listing_id, MatchScore.score, MatchScore.breakdown)
+        .join(Listing, Listing.id == MatchScore.listing_id)
+        .where(
+            MatchScore.owner_id == owner_id,
+            MatchScore.listing_id.in_(list(listing_ids)),
+            *_shown(owner_id),
+        )
+    )
+    return {
+        listing_id: (int(value), breakdown)
+        for listing_id, value, breakdown in (await session.execute(stmt)).all()
+    }
