@@ -4,7 +4,7 @@ import { Suspense } from "react";
 
 import { SignOutButton } from "@/components/auth/sign-out-button";
 import { ListingBrowser } from "@/components/listings/listing-browser";
-import { SETTINGS_PATH } from "@/lib/auth-paths";
+import { FEED_PATH, SETTINGS_PATH } from "@/lib/auth-paths";
 import { NOT_AFFILIATED_NOTICE, queryFromParam } from "@/lib/listings";
 
 export const metadata: Metadata = { title: "Listings · CareerLaunch" };
@@ -38,6 +38,11 @@ export default function ListingsPage(props: PageProps<"/listings">) {
       <p className="text-sm text-muted-foreground">
         Jobs and internships from the shared pool, newest first, or best match first when you
         search. &ldquo;Apply&rdquo; opens the original posting. {NOT_AFFILIATED_NOTICE}
+      </p>
+      <p className="text-sm">
+        <Link className="underline" href={FEED_PATH} data-testid="listings-open-feed">
+          See Listings ranked for you
+        </Link>
       </p>
       <Suspense fallback={<p className="text-muted-foreground">Loading Listings…</p>}>
         <ListingsFromSearchParams searchParams={props.searchParams} />

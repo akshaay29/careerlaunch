@@ -188,6 +188,114 @@ export type DocumentOut = {
 };
 
 /**
+ * Feed
+ *
+ * My Listings ranked by Match Score, best first (ties: newest ``posted_at``, then newest
+ * ``first_seen_at``).
+ *
+ * ``state``:
+ *
+ * * ``ready``: from my stored scores. Pass ``next_cursor`` as ``cursor`` for the next page
+ * (null = done).
+ * * ``provisional``: no stored scores yet; my top candidates were scored just now (one page,
+ * ``next_cursor`` null), from the newest Listings. Stored scores are being prepared.
+ * * ``setup_needed``: no skills and no job Preferences yet, so nothing can be ranked
+ * (``items`` is empty).
+ *
+ * ``threshold``: my Preferences threshold (60 by default). Listings below it are left out
+ * unless ``show_below_threshold``. ``hidden_below_threshold``: the toggle is off and at
+ * least one Listing I could see here scores below the threshold.
+ */
+export type Feed = {
+    /**
+     * State
+     */
+    state: 'ready' | 'provisional' | 'setup_needed';
+    /**
+     * Threshold
+     */
+    threshold: number;
+    /**
+     * Hidden Below Threshold
+     */
+    hidden_below_threshold: boolean;
+    /**
+     * Items
+     */
+    items: Array<FeedItem>;
+    /**
+     * Next Cursor
+     */
+    next_cursor: string | null;
+};
+
+/**
+ * FeedItem
+ *
+ * One Listing of the ranked feed with its Match Score (0-100). ``below_threshold``: the
+ * score is under the Student's threshold (only shown with ``show_below_threshold``). Every
+ * text field is scraped, untrusted text: render it as plain text.
+ */
+export type FeedItem = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Title
+     */
+    title: string;
+    /**
+     * Company
+     */
+    company: string;
+    /**
+     * Location
+     */
+    location: string;
+    /**
+     * Job Type
+     */
+    job_type: 'internship' | 'full_time' | null;
+    /**
+     * Posted At
+     */
+    posted_at: string | null;
+    /**
+     * Deadline
+     */
+    deadline: string | null;
+    /**
+     * Url
+     */
+    url: string;
+    /**
+     * Source
+     */
+    source: string;
+    /**
+     * Source Label
+     */
+    source_label: string;
+    /**
+     * Skills
+     */
+    skills: Array<ListingSkill>;
+    /**
+     * First Seen At
+     */
+    first_seen_at: string;
+    /**
+     * Score
+     */
+    score: number;
+    /**
+     * Below Threshold
+     */
+    below_threshold: boolean;
+};
+
+/**
  * HTTPValidationError
  */
 export type HttpValidationError = {
@@ -1804,3 +1912,43 @@ export type GetListingMatchResponses = {
 };
 
 export type GetListingMatchResponse = GetListingMatchResponses[keyof GetListingMatchResponses];
+
+export type GetFeedData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Limit
+         */
+        limit?: number;
+        /**
+         * Cursor
+         */
+        cursor?: string | null;
+        /**
+         * Show Below Threshold
+         */
+        show_below_threshold?: boolean;
+    };
+    url: '/api/v1/feed';
+};
+
+export type GetFeedErrors = {
+    /**
+     * Not signed in
+     */
+    401: unknown;
+    /**
+     * The cursor or limit is invalid
+     */
+    422: unknown;
+};
+
+export type GetFeedResponses = {
+    /**
+     * Successful Response
+     */
+    200: Feed;
+};
+
+export type GetFeedResponse = GetFeedResponses[keyof GetFeedResponses];

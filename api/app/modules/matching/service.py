@@ -1,6 +1,9 @@
 """matching.service: loads the scoring inputs and calls the pure scorer (AD-9).
 
 * Story 3.1: :func:`match_listing` scores one Listing on request and stores nothing.
+* Story 3.3: :func:`feed` is the Student's ranked feed: stored scores (``ready``), or, before
+  any exist, the top candidates scored on request and never stored (``provisional``), or
+  ``setup_needed``.
 * Story 3.2: stored scores for each Student's candidate set. :func:`mark_stale` is the ONLY
   recompute trigger (called by the event subscribers registered in ``matching.events``): it
   marks Students stale and enqueues one ``matching.recompute`` job per Student.
@@ -11,24 +14,28 @@ Services take the caller's session and never commit. :func:`recompute_for_owner`
 body: it opens and commits its own short transactions.
 """
 
+import base64
+import binascii
 import logging
 import time
 import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from typing import Literal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.db import get_sessionmaker
-from app.core.errors import NotFoundError
+from app.core.errors import InvalidInputError, NotFoundError
 from app.core.events import (
     ListingsIngested,
     PreferencesChanged,
     ResumeActivated,
     SkillProfileChanged,
 )
-from app.core.jobs import DEFAULT_QUEUE, PRIORITY_QUEUE, enqueue
+from app.core.jobs import DEFAULT_QUEUE, PRIORITY_QUEUE, enqueue, job_pending
 from app.core.ops import record_event
 from app.modules.listings import service as listings_service
 from app.modules.matching import repo
@@ -334,3 +341,199 @@ async def _refresh_relevance(session: AsyncSession, listing_ids: list[uuid.UUID]
             await listings_service.set_relevance(session, listing_id, best.get(listing_id, 0))
         except NotFoundError:
             continue  # deleted meanwhile (purge, eviction, takedown): nothing to rank
+
+
+# --------------------------------------------------------------------------- feed (Story 3.3)
+
+DEFAULT_THRESHOLD = 60
+FEED_FIRST_OPEN = "feed_first_open"
+# A pending priority mark younger than this is trusted; an older one (its job may have failed)
+# is made again.
+FEED_REMARK_AFTER = timedelta(minutes=15)
+
+FeedState = Literal["ready", "provisional", "setup_needed"]
+
+
+@dataclass(frozen=True)
+class FeedEntry:
+    item: listings_service.BrowseItem
+    score: int
+    below_threshold: bool
+
+
+@dataclass(frozen=True)
+class FeedPage:
+    state: FeedState
+    threshold: int
+    items: list[FeedEntry]
+    next_cursor: str | None
+    # The toggle is off and at least one Listing the feed could show scores below the threshold.
+    hidden_below_threshold: bool = False
+    # A priority recompute was queued on the caller's session: the router commits it and
+    # starts the after-response priority drain.
+    queued: bool = False
+
+
+def encode_feed_cursor(key: repo.FeedKey) -> str:
+    posted = key.posted_at.isoformat() if key.posted_at is not None else ""
+    raw = f"{key.score}|{posted}|{key.first_seen_at.isoformat()}|{key.listing_id}".encode()
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+def _aware(stamp: str) -> datetime:
+    at = datetime.fromisoformat(stamp)
+    if at.tzinfo is None:
+        raise ValueError("naive timestamp")
+    return at
+
+
+def decode_feed_cursor(cursor: str) -> repo.FeedKey:
+    """The keyset of an opaque feed cursor; :class:`InvalidInputError` (422) otherwise."""
+    try:
+        raw = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)).decode()
+        score_text, posted, first_seen, listing_id = raw.split("|")
+        if not score_text.isdigit():
+            raise ValueError("score")
+        value = int(score_text)
+        if not 0 <= value <= 100:
+            raise ValueError("score range")
+        return repo.FeedKey(
+            score=value,
+            posted_at=_aware(posted) if posted else None,
+            first_seen_at=_aware(first_seen),
+            listing_id=uuid.UUID(listing_id),
+        )
+    except (ValueError, binascii.Error, UnicodeDecodeError) as exc:
+        raise InvalidInputError(["query", "cursor"], listings_service.INVALID_CURSOR) from exc
+
+
+# Sorts before every real timestamp, so ``posted_at`` NULL comes last under ``reverse=True``.
+_NO_POST = datetime.min.replace(tzinfo=UTC)
+
+
+def _feed_sort_key(entry: FeedEntry) -> tuple:
+    """``score DESC, posted_at DESC NULLS LAST, first_seen_at DESC, id DESC`` (with
+    ``reverse=True``), the same order as the stored feed."""
+    listing = entry.item.listing
+    return (
+        entry.score,
+        listing.posted_at if listing.posted_at is not None else _NO_POST,
+        listing.first_seen_at,
+        listing.id,
+    )
+
+
+async def _needs_priority_mark(session: AsyncSession, owner_id: uuid.UUID) -> bool:
+    """Whether the provisional feed should mark the Student stale on the ``priority`` queue.
+
+    No when (a) a recompute already ran after the last mark (``last_computed_at`` not older
+    than ``scores_stale_since``) and stored nothing, so marking again would only repeat it; or
+    (b) the last mark is younger than :data:`FEED_REMARK_AFTER` and the Student's priority
+    recompute is still waiting (in the outbox or Procrastinate ``todo``). Otherwise yes: no
+    mark yet, only a default-queue job pending, or an old mark whose job may have failed. A
+    duplicate priority job is folded by its queueing lock."""
+    state = await repo.get_state(session, owner_id)
+    if state is None:
+        return True
+    stale, computed = state.scores_stale_since, state.last_computed_at
+    if computed is not None and (stale is None or computed >= stale):
+        return False
+    if stale is None or stale <= await repo.db_clock(session) - FEED_REMARK_AFTER:
+        return True
+    return not await job_pending(session, recompute_key(owner_id, priority=True))
+
+
+async def feed(
+    session: AsyncSession,
+    owner_id: uuid.UUID,
+    *,
+    limit: int,
+    cursor: str | None,
+    show_below_threshold: bool,
+) -> FeedPage:
+    """The Student's ranked feed (Story 3.3). Never commits.
+
+    * ``setup_needed``: no Preferences filter and no scorable skill (:func:`has_scoring_setup`);
+      ``match_scores`` is not queried.
+    * ``ready``: the Student has a stored score for a Listing they can see, or a cursor was
+      given (a cursor never falls back to the provisional page: an exhausted one gives an
+      empty page). One page of :func:`repo.feed_page` (visible, unexpired Listings only;
+      ``score >= threshold`` unless ``show_below_threshold``), with a keyset cursor.
+    * ``provisional``: setup but no such stored score yet. Up to ``FEED_ON_REQUEST_CAP``
+      candidates (``listings.service.candidate_set``, newest first) are scored now with the
+      one scorer, filtered by the threshold rule, sorted in the feed order and cut to
+      ``limit``; nothing is stored and ``next_cursor`` is null. When
+      :func:`_needs_priority_mark`, it marks the Student stale on the ``priority`` queue
+      (``feed_first_open``) and sets ``queued``.
+    * ``hidden_below_threshold``: the toggle is off and a visible score (stored, or computed
+      on request when provisional) is below the threshold.
+    """
+    after = decode_feed_cursor(cursor) if cursor else None
+    skill_profile = await profile_service.get_skill_profile(session, owner_id)
+    preferences = await profile_service.get_preferences(session, owner_id)
+    threshold = (
+        int(preferences.threshold)
+        if preferences is not None and preferences.threshold is not None
+        else DEFAULT_THRESHOLD
+    )
+    if not has_scoring_setup(skill_profile, preferences):
+        return FeedPage("setup_needed", threshold, [], None)
+
+    min_score = None if show_below_threshold else threshold
+    rows = await repo.feed_page(
+        session, owner_id, min_score=min_score, limit=limit + 1, after=after
+    )
+    if rows or after is not None or await repo.has_scores(session, owner_id):
+        page = rows[:limit]
+        entries = [
+            FeedEntry(listings_service.BrowseItem(listing, label), value, value < threshold)
+            for listing, label, value in page
+        ]
+        next_cursor = None
+        if len(rows) > limit:
+            last, _, last_score = page[-1]
+            next_cursor = encode_feed_cursor(
+                repo.FeedKey(last_score, last.posted_at, last.first_seen_at, last.id)
+            )
+        hidden = not show_below_threshold and await repo.has_scores(
+            session, owner_id, below=threshold
+        )
+        return FeedPage("ready", threshold, entries, next_cursor, hidden_below_threshold=hidden)
+
+    # Provisional: no stored score yet. Score the newest candidates now; store nothing.
+    profile = build_profile(skill_profile, preferences)
+    candidates = await listings_service.candidate_set(
+        session,
+        owner_id,
+        role_titles=list(preferences.role_titles) if preferences else [],
+        locations=list(preferences.locations) if preferences else [],
+        job_types=list(preferences.job_types) if preferences else [],
+        cap=get_settings().feed_on_request_cap,
+    )
+    weights = current_weights()
+    scored = {
+        c.listing_id: score(profile, _scoring_listing(c.scoring), weights)[0] for c in candidates
+    }
+    scores = {
+        listing_id: value
+        for listing_id, value in scored.items()
+        if show_below_threshold or value >= threshold
+    }
+    hidden = not show_below_threshold and any(v < threshold for v in scored.values())
+    items = await listings_service.visible_items(session, owner_id, scores)
+    entries = sorted(
+        (
+            FeedEntry(item, scores[item.listing.id], scores[item.listing.id] < threshold)
+            for item in items
+        ),
+        key=_feed_sort_key,
+        reverse=True,
+    )[:limit]
+
+    queued = False
+    if await _needs_priority_mark(session, owner_id):
+        await mark_stale(session, owner_ids=[owner_id], reason=FEED_FIRST_OPEN, priority=True)
+        queued = True
+    return FeedPage(
+        "provisional", threshold, entries, None, hidden_below_threshold=hidden, queued=queued
+    )

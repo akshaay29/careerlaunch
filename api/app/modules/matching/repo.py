@@ -1,5 +1,6 @@
 """matching.repo: SQL for ``match_scores``, ``match_score_missing_skills`` and
-``match_state`` only (AD-2)."""
+``match_state`` (AD-2), plus the ranked feed (Story 3.3): the ONE allowed cross-module read
+(AD-9), which joins ``match_scores`` to ``listings`` and ``sources`` directly."""
 
 import uuid
 from collections.abc import Iterable, Sequence
@@ -7,10 +8,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import delete, exists, func, literal, or_, select, text, tuple_
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.listings.models import Listing, Source
 from app.modules.matching.models import MatchScore, MatchScoreMissingSkill, MatchState
 
 # ``clock_timestamp()``, not ``now()``: a mark made late in a long transaction must still be
@@ -173,3 +175,100 @@ async def max_scores(
     )
     return {listing_id: int(score) for listing_id, score in result.all()}
 
+
+
+# --------------------------------------------------------------------------- feed (Story 3.3)
+
+# ``posted_at DESC NULLS LAST`` as a plain descending key: -infinity sorts after every real
+# timestamp, so the keyset is one row comparison over four descending values.
+_NO_POST = text("'-infinity'::timestamptz")
+
+
+def _posted_key():  # noqa: ANN202 (SQL expression)
+    return func.coalesce(Listing.posted_at, _NO_POST)
+
+
+def _shown(owner_id: uuid.UUID) -> tuple[Any, ...]:
+    """The feed's read-time guard: the Listing is visible to the owner and not expired."""
+    return (
+        or_(Listing.visibility_owner_id.is_(None), Listing.visibility_owner_id == owner_id),
+        Listing.expired_at.is_(None),
+    )
+
+
+@dataclass(frozen=True)
+class FeedKey:
+    """The keyset of one feed row: ``posted_at`` None sorts last."""
+
+    score: int
+    posted_at: datetime | None
+    first_seen_at: datetime
+    listing_id: uuid.UUID
+
+
+async def feed_page(
+    session: AsyncSession,
+    owner_id: uuid.UUID,
+    *,
+    min_score: int | None,
+    limit: int,
+    after: FeedKey | None,
+) -> list[tuple[Listing, str, int]]:
+    """One page of the owner's stored scores joined to their Listings and Sources, in one
+    query (uses the ``(owner_id, score DESC)`` index): only Listings visible to the owner and
+    not expired (a stale score row of an expired, taken-down or now-private Listing never
+    shows), ``score >= min_score`` unless None. Ordered ``score DESC, posted_at DESC NULLS
+    LAST, first_seen_at DESC, id DESC``; ``after`` is the exclusive keyset cursor."""
+    posted = _posted_key()
+    stmt = (
+        select(Listing, Source.label, MatchScore.score)
+        .select_from(MatchScore)
+        .join(Listing, Listing.id == MatchScore.listing_id)
+        .join(Source, Source.id == Listing.source)
+        .where(MatchScore.owner_id == owner_id, *_shown(owner_id))
+    )
+    if min_score is not None:
+        stmt = stmt.where(MatchScore.score >= min_score)
+    if after is not None:
+        after_posted = (
+            literal(after.posted_at, type_=Listing.posted_at.type)
+            if after.posted_at is not None
+            else _NO_POST
+        )
+        stmt = stmt.where(
+            tuple_(MatchScore.score, posted, Listing.first_seen_at, Listing.id)
+            < tuple_(
+                literal(after.score),
+                after_posted,
+                literal(after.first_seen_at, type_=Listing.first_seen_at.type),
+                literal(after.listing_id, type_=Listing.id.type),
+            )
+        )
+    stmt = (
+        stmt.order_by(
+            MatchScore.score.desc(),
+            posted.desc(),
+            Listing.first_seen_at.desc(),
+            Listing.id.desc(),
+        )
+        .limit(limit)
+        .execution_options(populate_existing=True)
+    )
+    rows = (await session.execute(stmt)).all()
+    return [(listing, label, int(score)) for listing, label, score in rows]
+
+
+async def has_scores(
+    session: AsyncSession, owner_id: uuid.UUID, *, below: int | None = None
+) -> bool:
+    """Whether the owner has a stored score for a Listing the feed can show (visible to them,
+    not expired; the same predicates as :func:`feed_page`), with ``score < below`` when
+    given."""
+    stmt = (
+        select(MatchScore.listing_id)
+        .join(Listing, Listing.id == MatchScore.listing_id)
+        .where(MatchScore.owner_id == owner_id, *_shown(owner_id))
+    )
+    if below is not None:
+        stmt = stmt.where(MatchScore.score < below)
+    return bool((await session.execute(select(exists(stmt)))).scalar())

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { ReactNode } from "react";
 
 import type { ListingOut } from "@/api";
 import { listingDates, listingMeta, listingPath } from "@/lib/listings";
@@ -19,18 +20,24 @@ export function SkillChips({ skills }: { skills: ListingOut["skills"] }) {
   );
 }
 
-/** One Listing in the browse list. All scraped text is rendered as plain text. */
-export function ListingCard({ listing }: { listing: ListingOut }) {
+/**
+ * One Listing in the browse list or the feed. All scraped text is rendered as plain text.
+ * `badge` (the feed's score) is shown beside the title.
+ */
+export function ListingCard({ listing, badge }: { listing: ListingOut; badge?: ReactNode }) {
   const dates = listingDates(listing);
   const meta = listingMeta(listing);
   return (
     <article className="flex flex-col gap-3 rounded-lg border p-4" data-testid={`listing-${listing.id}`}>
       <div className="flex flex-col gap-1">
-        <h2 className="font-medium break-words">
-          <Link className="hover:underline" href={listingPath(listing.id)}>
-            {listing.title}
-          </Link>
-        </h2>
+        <div className="flex items-start justify-between gap-3">
+          <h2 className="min-w-0 font-medium break-words">
+            <Link className="hover:underline" href={listingPath(listing.id)}>
+              {listing.title}
+            </Link>
+          </h2>
+          {badge}
+        </div>
         {meta ? <p className="text-sm text-muted-foreground break-words">{meta}</p> : null}
         {dates ? <p className="text-xs text-muted-foreground">{dates}</p> : null}
       </div>

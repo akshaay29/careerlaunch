@@ -2,11 +2,15 @@
 
 import uuid
 from datetime import date, datetime
-from typing import Literal
+from typing import TYPE_CHECKING, Any, Literal, Self
 
 from pydantic import BaseModel
 
+from app.core import skills
 from app.ports.source_adapter import JobType
+
+if TYPE_CHECKING:
+    from app.modules.listings.models import Listing
 
 
 class ListingSkill(BaseModel):
@@ -33,6 +37,26 @@ class ListingOut(BaseModel):
     source_label: str
     skills: list[ListingSkill]
     first_seen_at: datetime
+
+    @classmethod
+    def from_listing(cls, listing: "Listing", source_label: str, **extra: Any) -> Self:
+        """The DTO of a loaded Listing and its Source label; ``extra`` fills a subclass's own
+        fields (the feed's ``score``)."""
+        return cls(
+            id=listing.id,
+            title=listing.title,
+            company=listing.company,
+            location=listing.location,
+            job_type=listing.job_type,  # type: ignore[arg-type]
+            posted_at=listing.posted_at,
+            deadline=listing.deadline,
+            url=listing.url,
+            source=listing.source,
+            source_label=source_label,
+            skills=[ListingSkill(id=s, label=skills.label(s)) for s in listing.skills],
+            first_seen_at=listing.first_seen_at,
+            **extra,
+        )
 
 
 class ListingList(BaseModel):

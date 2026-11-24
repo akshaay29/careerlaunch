@@ -1436,6 +1436,86 @@
           }
         }
       }
+    },
+    "/api/v1/feed": {
+      "get": {
+        "tags": [
+          "matching"
+        ],
+        "summary": "Get Feed",
+        "description": "My Listings ranked by Match Score, best first. Only Listings I can see that have not\nexpired; those under my threshold only with ``show_below_threshold``. Before my scores are\nstored, my top matches are scored now (``provisional``).",
+        "operationId": "getFeed",
+        "security": [
+          {
+            "SupabaseAccessToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 50,
+              "minimum": 1,
+              "default": 20,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 200
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "name": "show_below_threshold",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Show Below Threshold"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Feed"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/problem+json": {}
+            }
+          },
+          "422": {
+            "description": "The cursor or limit is invalid",
+            "content": {
+              "application/problem+json": {}
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1711,6 +1791,170 @@
         ],
         "title": "DocumentOut",
         "description": "One stored Document. ``filename`` is untrusted text: render it as plain text."
+      },
+      "Feed": {
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "provisional",
+              "setup_needed"
+            ],
+            "title": "State"
+          },
+          "threshold": {
+            "type": "integer",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Threshold"
+          },
+          "hidden_below_threshold": {
+            "type": "boolean",
+            "title": "Hidden Below Threshold"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/FeedItem"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "type": "object",
+        "required": [
+          "state",
+          "threshold",
+          "hidden_below_threshold",
+          "items",
+          "next_cursor"
+        ],
+        "title": "Feed",
+        "description": "My Listings ranked by Match Score, best first (ties: newest ``posted_at``, then newest\n``first_seen_at``).\n\n``state``:\n\n* ``ready``: from my stored scores. Pass ``next_cursor`` as ``cursor`` for the next page\n  (null = done).\n* ``provisional``: no stored scores yet; my top candidates were scored just now (one page,\n  ``next_cursor`` null), from the newest Listings. Stored scores are being prepared.\n* ``setup_needed``: no skills and no job Preferences yet, so nothing can be ranked\n  (``items`` is empty).\n\n``threshold``: my Preferences threshold (60 by default). Listings below it are left out\nunless ``show_below_threshold``. ``hidden_below_threshold``: the toggle is off and at\nleast one Listing I could see here scores below the threshold."
+      },
+      "FeedItem": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "company": {
+            "type": "string",
+            "title": "Company"
+          },
+          "location": {
+            "type": "string",
+            "title": "Location"
+          },
+          "job_type": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "internship",
+                  "full_time"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Type"
+          },
+          "posted_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Posted At"
+          },
+          "deadline": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deadline"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "source_label": {
+            "type": "string",
+            "title": "Source Label"
+          },
+          "skills": {
+            "items": {
+              "$ref": "#/components/schemas/ListingSkill"
+            },
+            "type": "array",
+            "title": "Skills"
+          },
+          "first_seen_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "First Seen At"
+          },
+          "score": {
+            "type": "integer",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Score"
+          },
+          "below_threshold": {
+            "type": "boolean",
+            "title": "Below Threshold"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "company",
+          "location",
+          "job_type",
+          "posted_at",
+          "deadline",
+          "url",
+          "source",
+          "source_label",
+          "skills",
+          "first_seen_at",
+          "score",
+          "below_threshold"
+        ],
+        "title": "FeedItem",
+        "description": "One Listing of the ranked feed with its Match Score (0-100). ``below_threshold``: the\nscore is under the Student's threshold (only shown with ``show_below_threshold``). Every\ntext field is scraped, untrusted text: render it as plain text."
       },
       "HTTPValidationError": {
         "properties": {

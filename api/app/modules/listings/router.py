@@ -12,7 +12,6 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import skills
 from app.core.auth import Actor, current_actor
 from app.core.db import get_session
 from app.modules.listings import service
@@ -20,7 +19,6 @@ from app.modules.listings.schemas import (
     ListingList,
     ListingOut,
     ListingSearchResults,
-    ListingSkill,
     ProviderUsage,
     ProviderUsageCaps,
     ProviderUsageMonth,
@@ -37,21 +35,7 @@ _PROBLEM = {"content": {"application/problem+json": {}}}
 
 
 def _out(item: service.BrowseItem) -> ListingOut:
-    listing = item.listing
-    return ListingOut(
-        id=listing.id,
-        title=listing.title,
-        company=listing.company,
-        location=listing.location,
-        job_type=listing.job_type,  # type: ignore[arg-type]
-        posted_at=listing.posted_at,
-        deadline=listing.deadline,
-        url=listing.url,
-        source=listing.source,
-        source_label=item.source_label,
-        skills=[ListingSkill(id=s, label=skills.label(s)) for s in listing.skills],
-        first_seen_at=listing.first_seen_at,
-    )
+    return ListingOut.from_listing(item.listing, item.source_label)
 
 
 @router.get(
