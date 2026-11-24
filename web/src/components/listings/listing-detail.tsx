@@ -3,8 +3,15 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
-import { type ListingMatch, type ListingOut, getListing, getListingMatch } from "@/api";
+import {
+  type ListingMatch,
+  type ListingOut,
+  getApplicationForListing,
+  getListing,
+  getListingMatch,
+} from "@/api";
 import { MatchScoreBadge } from "@/components/matching/score-breakdown-view";
+import { SaveListingButton } from "@/components/tracker/save-listing-button";
 import { Button } from "@/components/ui/button";
 import { LOGIN_PATH } from "@/lib/auth-paths";
 import { formatDate, formatJobType, formatTimestampDate } from "@/lib/listings";
@@ -42,24 +49,45 @@ async function fetchScore(id: string): Promise<ListingMatch | null> {
   }
 }
 
+/** My Application for this Listing: its id, null when not saved, or undefined when the
+ * lookup failed (the Save button then simply shows "Save"; saving is idempotent). */
+async function fetchSaved(id: string): Promise<string | null | undefined> {
+  try {
+    const { data } = await getApplicationForListing({ path: { listing_id: id } });
+    return data ? data.application_id : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Saved state: still being looked up, or the Application id (null when not saved). */
+type Saved = { kind: "loading" } | { kind: "done"; applicationId: string | null };
+
 /**
- * Loads the Listing, then, only when it loaded, its Match Score by the server's id (so the
- * badge never depends on the URL's spelling of the id). The score is optional: when it fails
- * the page renders without a badge.
+ * Loads the Listing, then, only when it loaded, its Match Score and my saved state by the
+ * server's id (so neither depends on the URL's spelling of the id), each applied as it
+ * arrives. The score is optional: when it fails the page renders without a badge.
  */
 async function loadListing(
   id: string,
   request: { current: number },
   setLoad: (load: Load) => void,
   setMatch: (match: ListingMatch | null) => void,
+  setSaved: (saved: Saved) => void,
 ) {
   const mine = ++request.current;
+  setSaved({ kind: "loading" });
   const next = await fetchListing(id);
   if (request.current !== mine) return;
   setLoad(next);
   if (next.kind !== "ok") return;
-  const found = await fetchScore(next.listing.id);
-  if (request.current === mine && found) setMatch(found);
+  // Independent: the badge never waits on the saved lookup, nor the Save button on the score.
+  void fetchScore(next.listing.id).then((found) => {
+    if (request.current === mine && found) setMatch(found);
+  });
+  void fetchSaved(next.listing.id).then((saved) => {
+    if (request.current === mine) setSaved({ kind: "done", applicationId: saved ?? null });
+  });
 }
 
 function Fact({ label, value }: { label: string; value: string | null }) {
@@ -76,12 +104,13 @@ function Fact({ label, value }: { label: string; value: string | null }) {
 export function ListingDetail({ id }: { id: string }) {
   const [load, setLoad] = useState<Load>({ kind: "loading" });
   const [match, setMatch] = useState<ListingMatch | null>(null);
+  const [saved, setSaved] = useState<Saved>({ kind: "loading" });
   // Bumped by each load (mount, id change, Try again) and on unmount: only the latest load
   // may set state.
   const request = useRef(0);
 
   useEffect(() => {
-    void loadListing(id, request, setLoad, setMatch);
+    void loadListing(id, request, setLoad, setMatch, setSaved);
     const current = request;
     return () => {
       current.current += 1;
@@ -119,7 +148,7 @@ export function ListingDetail({ id }: { id: string }) {
           variant="outline"
           onClick={() => {
             setLoad({ kind: "loading" });
-            void loadListing(id, request, setLoad, setMatch);
+            void loadListing(id, request, setLoad, setMatch, setSaved);
           }}
         >
           Try again
@@ -152,7 +181,14 @@ export function ListingDetail({ id }: { id: string }) {
           <SkillChips skills={listing.skills} />
         </section>
       ) : null}
-      <div>
+      <div className="flex flex-wrap items-start gap-2">
+        {saved.kind === "done" ? (
+          <SaveListingButton
+            key={saved.applicationId ?? "unsaved"}
+            listingId={listing.id}
+            applicationId={saved.applicationId}
+          />
+        ) : null}
         <ApplyLink listing={listing} />
       </div>
       <ListingAttribution listing={listing} />

@@ -125,6 +125,24 @@ class ConsentVersionMismatchError(DomainError):
         self.current_version = current_version
 
 
+class InvalidTransitionError(DomainError):
+    """A Status change the transition table does not allow (Story 4.1). ``allowed`` lists
+    the Statuses the Application may move to next (empty when none)."""
+
+    status = 409
+    slug = "invalid-transition"
+    title = "Invalid transition"
+
+    def __init__(self, current: str, requested: str, allowed: list[str]) -> None:
+        super().__init__(
+            f"An Application in status '{current}' cannot move to '{requested}'.",
+            extra={"allowed": list(allowed)},
+        )
+        self.current = current
+        self.requested = requested
+        self.allowed = list(allowed)
+
+
 class AuthUnavailableError(DomainError):
     """The signing keys could not be fetched, so no token can be verified right now."""
 

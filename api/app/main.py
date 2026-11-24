@@ -37,6 +37,7 @@ from app.modules.profile import events as profile_events
 from app.modules.profile.files import MAX_FILE_BYTES
 from app.modules.profile.router import router as profile_router
 from app.modules.profile.service import DOCUMENT_TOO_LARGE_DETAIL, TOO_LARGE_DETAIL
+from app.modules.tracker import events as tracker_events
 from app.modules.tracker.router import router as tracker_router
 from app.ports.auth_admin import AuthAdmin, LazyAuthAdmin, install_auth_admin
 from app.ports.file_store import FileStore, LazyFileStore, install_file_store
@@ -217,6 +218,7 @@ def create_app(
     profile_events.register()
     listings_events.register()
     matching_events.register()
+    tracker_events.register()
 
     # Admin and public first: routes match in mount order, so a token-only route such as
     # /{id}/... can never shadow /api/v1/admin/* or /api/v1/public/*.

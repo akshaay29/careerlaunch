@@ -56,15 +56,15 @@ development_status:
   2-6-search-listings-by-keyword: done
   epic-2-retrospective: optional
 
-  epic-3: in-progress
+  epic-3: done
   3-1-deterministic-match-score-with-a-breakdown: done
   3-2-keep-my-scores-fresh: done
   3-3-my-ranked-feed: done
-  3-4-see-why-a-listing-scored-what-it-did: in-progress
+  3-4-see-why-a-listing-scored-what-it-did: done
   epic-3-retrospective: optional
 
-  epic-4: backlog
-  4-1-save-a-listing-and-track-its-status: backlog
+  epic-4: in-progress
+  4-1-save-a-listing-and-track-its-status: in-progress
   4-2-my-tracker-view: backlog
   4-3-add-a-job-from-another-site: backlog
   4-4-launch-hardening: backlog

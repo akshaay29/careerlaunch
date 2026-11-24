@@ -90,6 +90,27 @@ class ProviderKeyChanged(Event):
     removed: bool
 
 
+@dataclass(frozen=True)
+class ApplicationClosed(Event):
+    """An Application entered Rejected or Withdrawn (FR-16, Story 4.1). Published by
+    ``tracker.service.transition`` in the transition's transaction. ``listing_id`` is None
+    when the Listing is gone. Outreach cancels Follow-ups from it (phase 2)."""
+
+    owner_id: uuid.UUID
+    application_id: uuid.UUID
+    listing_id: uuid.UUID | None
+
+
+@dataclass(frozen=True)
+class ApplicationReopened(Event):
+    """A Rejected or Withdrawn Application went back to the Status it was closed from
+    (Story 4.1). Same fields as :class:`ApplicationClosed`."""
+
+    owner_id: uuid.UUID
+    application_id: uuid.UUID
+    listing_id: uuid.UUID | None
+
+
 Handler = Callable[[AsyncSession, Any], Awaitable[None]]
 
 _subscribers: dict[type[Event], list[Handler]] = {}

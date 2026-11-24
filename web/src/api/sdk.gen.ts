@@ -2,7 +2,7 @@
 
 import { type Client, type ClientMeta, formDataBodySerializer, type Options as Options2, type RequestResult, type TDataShape } from './client';
 import { client } from './client.gen';
-import type { ActivateResumeData, ActivateResumeErrors, ActivateResumeResponses, DeleteDocumentData, DeleteDocumentErrors, DeleteDocumentResponses, DeleteMeData, DeleteMeErrors, DeleteMeResponses, DeleteProviderKeyData, DeleteProviderKeyResponses, DeleteResumeData, DeleteResumeErrors, DeleteResumeResponses, EditSkillProfileData, EditSkillProfileErrors, EditSkillProfileResponses, GetAdminMeData, GetAdminMeResponses, GetDocumentDownloadData, GetDocumentDownloadErrors, GetDocumentDownloadResponses, GetFeedData, GetFeedErrors, GetFeedResponses, GetHealthData, GetHealthResponses, GetListingData, GetListingErrors, GetListingMatchData, GetListingMatchErrors, GetListingMatchResponses, GetListingResponses, GetMatchScoresData, GetMatchScoresErrors, GetMatchScoresResponses, GetMeData, GetMeResponses, GetPreferencesData, GetPreferencesResponses, GetProviderKeyData, GetProviderKeyResponses, GetProviderUsageData, GetProviderUsageResponses, GetResumeDownloadData, GetResumeDownloadErrors, GetResumeDownloadResponses, GetSkillProfileData, GetSkillProfileResponses, GetSpendCapsData, GetSpendCapsResponses, GrantConsentData, GrantConsentErrors, GrantConsentResponses, ListConsentsData, ListConsentsResponses, ListDegreesData, ListDegreesResponses, ListDocumentsData, ListDocumentsErrors, ListDocumentsResponses, ListListingsData, ListListingsErrors, ListListingsResponses, ListResumesData, ListResumesErrors, ListResumesResponses, PutProviderKeyData, PutProviderKeyErrors, PutProviderKeyResponses, PutSpendCapsData, PutSpendCapsErrors, PutSpendCapsResponses, RecordBreakdownViewedData, RecordBreakdownViewedErrors, RecordBreakdownViewedResponses, ResetSkillProfileData, ResetSkillProfileResponses, RevokeConsentData, RevokeConsentErrors, RevokeConsentResponses, SavePreferencesData, SavePreferencesErrors, SavePreferencesResponses, SearchListingsData, SearchListingsErrors, SearchListingsResponses, SuggestSkillsData, SuggestSkillsErrors, SuggestSkillsResponses, UploadDocumentData, UploadDocumentErrors, UploadDocumentResponses, UploadResumeData, UploadResumeErrors, UploadResumeResponses } from './types.gen';
+import type { ActivateResumeData, ActivateResumeErrors, ActivateResumeResponses, DeleteApplicationData, DeleteApplicationErrors, DeleteApplicationResponses, DeleteDocumentData, DeleteDocumentErrors, DeleteDocumentResponses, DeleteMeData, DeleteMeErrors, DeleteMeResponses, DeleteProviderKeyData, DeleteProviderKeyResponses, DeleteResumeData, DeleteResumeErrors, DeleteResumeResponses, EditSkillProfileData, EditSkillProfileErrors, EditSkillProfileResponses, GetAdminMeData, GetAdminMeResponses, GetApplicationData, GetApplicationErrors, GetApplicationForListingData, GetApplicationForListingErrors, GetApplicationForListingResponses, GetApplicationHistoryData, GetApplicationHistoryErrors, GetApplicationHistoryResponses, GetApplicationResponses, GetDocumentDownloadData, GetDocumentDownloadErrors, GetDocumentDownloadResponses, GetFeedData, GetFeedErrors, GetFeedResponses, GetHealthData, GetHealthResponses, GetListingData, GetListingErrors, GetListingMatchData, GetListingMatchErrors, GetListingMatchResponses, GetListingResponses, GetMatchScoresData, GetMatchScoresErrors, GetMatchScoresResponses, GetMeData, GetMeResponses, GetPreferencesData, GetPreferencesResponses, GetProviderKeyData, GetProviderKeyResponses, GetProviderUsageData, GetProviderUsageResponses, GetResumeDownloadData, GetResumeDownloadErrors, GetResumeDownloadResponses, GetSkillProfileData, GetSkillProfileResponses, GetSpendCapsData, GetSpendCapsResponses, GrantConsentData, GrantConsentErrors, GrantConsentResponses, ListConsentsData, ListConsentsResponses, ListDegreesData, ListDegreesResponses, ListDocumentsData, ListDocumentsErrors, ListDocumentsResponses, ListListingsData, ListListingsErrors, ListListingsResponses, ListResumesData, ListResumesErrors, ListResumesResponses, PutProviderKeyData, PutProviderKeyErrors, PutProviderKeyResponses, PutSpendCapsData, PutSpendCapsErrors, PutSpendCapsResponses, RecordBreakdownViewedData, RecordBreakdownViewedErrors, RecordBreakdownViewedResponses, ResetSkillProfileData, ResetSkillProfileResponses, RevokeConsentData, RevokeConsentErrors, RevokeConsentResponses, SaveListingData, SaveListingErrors, SaveListingResponses, SavePreferencesData, SavePreferencesErrors, SavePreferencesResponses, SearchListingsData, SearchListingsErrors, SearchListingsResponses, SuggestSkillsData, SuggestSkillsErrors, SuggestSkillsResponses, TransitionApplicationData, TransitionApplicationErrors, TransitionApplicationResponses, UpdateApplicationData, UpdateApplicationErrors, UpdateApplicationResponses, UploadDocumentData, UploadDocumentErrors, UploadDocumentResponses, UploadResumeData, UploadResumeErrors, UploadResumeResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -435,5 +435,98 @@ export const getMatchScores = <ThrowOnError extends boolean = false>(options?: O
 export const getFeed = <ThrowOnError extends boolean = false>(options?: Options<GetFeedData, ThrowOnError>): RequestResult<GetFeedResponses, GetFeedErrors, ThrowOnError> => (options?.client ?? client).get<GetFeedResponses, GetFeedErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/api/v1/feed',
+    ...options
+});
+
+/**
+ * Save Listing
+ *
+ * Save a Listing you can see as an Application in Status Saved (201). Saving it again
+ * returns the same Application unchanged (200).
+ */
+export const saveListing = <ThrowOnError extends boolean = false>(options: Options<SaveListingData, ThrowOnError>): RequestResult<SaveListingResponses, SaveListingErrors, ThrowOnError> => (options.client ?? client).post<SaveListingResponses, SaveListingErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/v1/applications',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Get Application For Listing
+ *
+ * The id of your Application for a Listing, or null when you have not saved it.
+ */
+export const getApplicationForListing = <ThrowOnError extends boolean = false>(options: Options<GetApplicationForListingData, ThrowOnError>): RequestResult<GetApplicationForListingResponses, GetApplicationForListingErrors, ThrowOnError> => (options.client ?? client).get<GetApplicationForListingResponses, GetApplicationForListingErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/v1/applications/by-listing/{listing_id}',
+    ...options
+});
+
+/**
+ * Delete Application
+ *
+ * Delete an Application and its history.
+ */
+export const deleteApplication = <ThrowOnError extends boolean = false>(options: Options<DeleteApplicationData, ThrowOnError>): RequestResult<DeleteApplicationResponses, DeleteApplicationErrors, ThrowOnError> => (options.client ?? client).delete<DeleteApplicationResponses, DeleteApplicationErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/v1/applications/{application_id}',
+    ...options
+});
+
+/**
+ * Get Application
+ *
+ * One of your Applications, with the Statuses it may move to next.
+ */
+export const getApplication = <ThrowOnError extends boolean = false>(options: Options<GetApplicationData, ThrowOnError>): RequestResult<GetApplicationResponses, GetApplicationErrors, ThrowOnError> => (options.client ?? client).get<GetApplicationResponses, GetApplicationErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/v1/applications/{application_id}',
+    ...options
+});
+
+/**
+ * Update Application
+ *
+ * Change the notes, the applied date or the Resume version used. Only the fields you
+ * send change; the Status never does.
+ */
+export const updateApplication = <ThrowOnError extends boolean = false>(options: Options<UpdateApplicationData, ThrowOnError>): RequestResult<UpdateApplicationResponses, UpdateApplicationErrors, ThrowOnError> => (options.client ?? client).patch<UpdateApplicationResponses, UpdateApplicationErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/v1/applications/{application_id}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Transition Application
+ *
+ * Move an Application to another Status. Saved goes to Applied or Withdrawn; Applied to
+ * Interview, Rejected or Withdrawn; Interview to Offer, Rejected or Withdrawn. Rejected or
+ * Withdrawn reopens only to the Status it was in before; Offer is final.
+ */
+export const transitionApplication = <ThrowOnError extends boolean = false>(options: Options<TransitionApplicationData, ThrowOnError>): RequestResult<TransitionApplicationResponses, TransitionApplicationErrors, ThrowOnError> => (options.client ?? client).post<TransitionApplicationResponses, TransitionApplicationErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/v1/applications/{application_id}/status',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Get Application History
+ *
+ * Every Status change of an Application, newest first.
+ */
+export const getApplicationHistory = <ThrowOnError extends boolean = false>(options: Options<GetApplicationHistoryData, ThrowOnError>): RequestResult<GetApplicationHistoryResponses, GetApplicationHistoryErrors, ThrowOnError> => (options.client ?? client).get<GetApplicationHistoryResponses, GetApplicationHistoryErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/v1/applications/{application_id}/history',
     ...options
 });

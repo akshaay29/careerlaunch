@@ -252,6 +252,11 @@ async def _owned(session: AsyncSession, owner_id: uuid.UUID, resume_id: uuid.UUI
     return resume
 
 
+async def owns_resume(session: AsyncSession, owner_id: uuid.UUID, resume_id: uuid.UUID) -> bool:
+    """Whether ``resume_id`` is one of the owner's Resume versions (tracker, Story 4.1)."""
+    return await repo.get(session, owner_id, resume_id) is not None
+
+
 async def activate_resume(
     session: AsyncSession, owner_id: uuid.UUID, resume_id: uuid.UUID
 ) -> tuple[Resume, bool]:

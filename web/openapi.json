@@ -1638,6 +1638,446 @@
           }
         }
       }
+    },
+    "/api/v1/applications": {
+      "post": {
+        "tags": [
+          "tracker"
+        ],
+        "summary": "Save Listing",
+        "description": "Save a Listing you can see as an Application in Status Saved (201). Saving it again\nreturns the same Application unchanged (200).",
+        "operationId": "saveListing",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveListingIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplicationOut"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Already saved: the existing Application",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplicationOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/problem+json": {}
+            }
+          },
+          "404": {
+            "description": "No such Listing for this Student, or it expired",
+            "content": {
+              "application/problem+json": {}
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "SupabaseAccessToken": []
+          }
+        ]
+      }
+    },
+    "/api/v1/applications/by-listing/{listing_id}": {
+      "get": {
+        "tags": [
+          "tracker"
+        ],
+        "summary": "Get Application For Listing",
+        "description": "The id of your Application for a Listing, or null when you have not saved it.",
+        "operationId": "getApplicationForListing",
+        "security": [
+          {
+            "SupabaseAccessToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "listing_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Listing Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplicationForListing"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/problem+json": {}
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/applications/{application_id}": {
+      "get": {
+        "tags": [
+          "tracker"
+        ],
+        "summary": "Get Application",
+        "description": "One of your Applications, with the Statuses it may move to next.",
+        "operationId": "getApplication",
+        "security": [
+          {
+            "SupabaseAccessToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "application_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Application Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplicationOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/problem+json": {}
+            }
+          },
+          "404": {
+            "description": "No such Application for this Student",
+            "content": {
+              "application/problem+json": {}
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "tracker"
+        ],
+        "summary": "Update Application",
+        "description": "Change the notes, the applied date or the Resume version used. Only the fields you\nsend change; the Status never does.",
+        "operationId": "updateApplication",
+        "security": [
+          {
+            "SupabaseAccessToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "application_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Application Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplicationUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplicationOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/problem+json": {}
+            }
+          },
+          "404": {
+            "description": "No such Application for this Student",
+            "content": {
+              "application/problem+json": {}
+            }
+          },
+          "422": {
+            "description": "Notes over 4,000 characters, a future applied date, or a Resume that is not yours",
+            "content": {
+              "application/problem+json": {}
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "tracker"
+        ],
+        "summary": "Delete Application",
+        "description": "Delete an Application and its history.",
+        "operationId": "deleteApplication",
+        "security": [
+          {
+            "SupabaseAccessToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "application_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Application Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/problem+json": {}
+            }
+          },
+          "404": {
+            "description": "No such Application for this Student",
+            "content": {
+              "application/problem+json": {}
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/applications/{application_id}/status": {
+      "post": {
+        "tags": [
+          "tracker"
+        ],
+        "summary": "Transition Application",
+        "description": "Move an Application to another Status. Saved goes to Applied or Withdrawn; Applied to\nInterview, Rejected or Withdrawn; Interview to Offer, Rejected or Withdrawn. Rejected or\nWithdrawn reopens only to the Status it was in before; Offer is final.",
+        "operationId": "transitionApplication",
+        "security": [
+          {
+            "SupabaseAccessToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "application_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Application Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TransitionIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplicationOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/problem+json": {}
+            }
+          },
+          "404": {
+            "description": "No such Application for this Student",
+            "content": {
+              "application/problem+json": {}
+            }
+          },
+          "409": {
+            "description": "The move is not allowed; ``allowed`` lists the next Statuses",
+            "content": {
+              "application/problem+json": {}
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/applications/{application_id}/history": {
+      "get": {
+        "tags": [
+          "tracker"
+        ],
+        "summary": "Get Application History",
+        "description": "Every Status change of an Application, newest first.",
+        "operationId": "getApplicationHistory",
+        "security": [
+          {
+            "SupabaseAccessToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "application_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Application Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplicationHistory"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/problem+json": {}
+            }
+          },
+          "404": {
+            "description": "No such Application for this Student",
+            "content": {
+              "application/problem+json": {}
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1656,6 +2096,234 @@
         ],
         "title": "AccountDeletion",
         "description": "Confirms an account deletion: the account's email, typed by the Student. Compared\nafter trimming and ignoring case."
+      },
+      "ApplicationForListing": {
+        "properties": {
+          "application_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Application Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "application_id"
+        ],
+        "title": "ApplicationForListing",
+        "description": "Your Application for a Listing, or null when you have not saved it."
+      },
+      "ApplicationHistory": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/StatusChange"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "ApplicationHistory",
+        "description": "Status changes, newest first."
+      },
+      "ApplicationOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "listing_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Listing Id"
+          },
+          "listing_available": {
+            "type": "boolean",
+            "title": "Listing Available"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "saved",
+              "applied",
+              "interview",
+              "offer",
+              "rejected",
+              "withdrawn"
+            ],
+            "title": "Status"
+          },
+          "allowed_next": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "saved",
+                "applied",
+                "interview",
+                "offer",
+                "rejected",
+                "withdrawn"
+              ]
+            },
+            "type": "array",
+            "title": "Allowed Next"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "company": {
+            "type": "string",
+            "title": "Company"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "deadline": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deadline"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "applied_on": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applied On"
+          },
+          "resume_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resume Id"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "today": {
+            "type": "string",
+            "format": "date",
+            "title": "Today"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "listing_id",
+          "listing_available",
+          "status",
+          "allowed_next",
+          "title",
+          "company",
+          "url",
+          "deadline",
+          "notes",
+          "applied_on",
+          "resume_id",
+          "created_at",
+          "updated_at",
+          "today"
+        ],
+        "title": "ApplicationOut",
+        "description": "One Application. ``title``, ``company``, ``url`` and ``deadline`` are the snapshot taken\nwhen the Listing was saved (scraped, untrusted text: render it as plain text).\n``listing_available`` is false once the Listing is gone, expired or no longer visible to\nyou. ``allowed_next`` lists the Statuses it may move to now (empty when none). ``today``\nis your local date (Preferences time zone): the latest allowed ``applied_on``."
+      },
+      "ApplicationUpdate": {
+        "properties": {
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 4200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "applied_on": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applied On"
+          },
+          "resume_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resume Id"
+          }
+        },
+        "type": "object",
+        "title": "ApplicationUpdate",
+        "description": "A partial update: only the fields sent are changed. ``notes`` is trimmed (empty clears\nit, 4,000 characters at most); ``applied_on`` is from 2000-01-01 to today; ``resume_id`` must\nbe one of your Resume versions, and null clears it."
       },
       "Body_uploadDocument": {
         "properties": {
@@ -3104,6 +3772,20 @@
         "title": "RightsNotice",
         "description": "The India DPDP Act rights notice, shown with the consent texts (plain text)."
       },
+      "SaveListingIn": {
+        "properties": {
+          "listing_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Listing Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "listing_id"
+        ],
+        "title": "SaveListingIn"
+      },
       "ScoreBreakdown": {
         "properties": {
           "algo_version": {
@@ -3399,6 +4081,75 @@
         ],
         "title": "SpendCapsOut",
         "description": "The Student's spend caps in USD. ``is_default``: never set, so the platform defaults\napply. Every run is refused before it starts when its estimate is above ``per_run_usd``\nor when it could take this month's committed spend above ``monthly_usd``."
+      },
+      "StatusChange": {
+        "properties": {
+          "from_status": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "saved",
+                  "applied",
+                  "interview",
+                  "offer",
+                  "rejected",
+                  "withdrawn"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "From Status"
+          },
+          "to_status": {
+            "type": "string",
+            "enum": [
+              "saved",
+              "applied",
+              "interview",
+              "offer",
+              "rejected",
+              "withdrawn"
+            ],
+            "title": "To Status"
+          },
+          "changed_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Changed At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "from_status",
+          "to_status",
+          "changed_at"
+        ],
+        "title": "StatusChange",
+        "description": "One Status change. ``from_status`` is null for the save."
+      },
+      "TransitionIn": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "saved",
+              "applied",
+              "interview",
+              "offer",
+              "rejected",
+              "withdrawn"
+            ],
+            "title": "Status"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "TransitionIn"
       },
       "ValidationError": {
         "properties": {

@@ -356,7 +356,7 @@ async def test_failures_are_retried_per_policy() -> None:
     await _enqueue_and_commit(flaky, _key("tests.flaky", item), item_id=item)
     await drain()
     assert RUNS == [("flaky", {"item_id": item})]
-    kinds = [k for (k,) in await _rows("SELECT kind FROM ops_events WHERE kind LIKE 'job.%' ORDER BY created_at")]
+    kinds = [k for (k,) in await _rows("SELECT kind FROM ops_events WHERE kind LIKE 'job.%' ORDER BY created_at, id")]
     assert kinds == ["job.failed", "job.succeeded"]
 
 

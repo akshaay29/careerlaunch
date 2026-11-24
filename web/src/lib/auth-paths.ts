@@ -9,11 +9,19 @@ export const SETTINGS_PATH = "/settings";
 export const LISTINGS_PATH = "/listings";
 /** My Listings ranked by Match Score (Story 3.3). */
 export const FEED_PATH = "/feed";
+/** One saved Application (Story 4.1). */
+export const TRACKER_PATH = "/tracker";
 /** Shown after an account deletion. Public: the user is already signed out. */
 export const ACCOUNT_DELETED_PATH = "/account-deleted";
 
 /** Pages only a signed-in user may see (the proxy redirects others to /login). */
-export const PROTECTED_PREFIXES = [ONBOARDING_PATH, SETTINGS_PATH, LISTINGS_PATH, FEED_PATH];
+export const PROTECTED_PREFIXES = [
+  ONBOARDING_PATH,
+  SETTINGS_PATH,
+  LISTINGS_PATH,
+  FEED_PATH,
+  TRACKER_PATH,
+];
 
 /** Pages a signed-in user is sent away from (to /onboarding). */
 export const GUEST_ONLY_PATHS = [LOGIN_PATH, SIGNUP_PATH];
