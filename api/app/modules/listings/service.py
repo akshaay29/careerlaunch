@@ -493,6 +493,85 @@ async def get_scoring_input(
     )
 
 
+@dataclass(frozen=True)
+class CandidateInput:
+    """One Listing of a Student's candidate set with its scoring input (Story 3.2)."""
+
+    listing_id: uuid.UUID
+    scoring: ScoringInput
+
+
+def role_tsquery(role_titles: Iterable[str]) -> str | None:
+    """A prefix tsquery matching a Listing title that has every word of at least one role
+    title: ``(backend:*A & developer:*A) | (data:*A & analyst:*A)``. Built from
+    :func:`search_tokens` only, so it carries no tsquery syntax. None without any token."""
+    groups = []
+    for role in role_titles:
+        tokens = search_tokens(role)
+        if tokens:
+            groups.append("(" + " & ".join(f"{t}:*A" for t in tokens) + ")")
+    return " | ".join(groups) or None
+
+
+async def candidate_set(
+    session: AsyncSession,
+    owner_id: uuid.UUID,
+    *,
+    role_titles: Iterable[str],
+    locations: Iterable[str],
+    job_types: Iterable[str],
+    cap: int,
+) -> list[CandidateInput]:
+    """A Student's Match Score candidate set (Story 3.2) with each Listing's scoring input, in
+    one query: Listings visible to ``owner_id`` and not expired whose title matches a role
+    title (prefix full text over the title, or trigram word similarity of at least
+    ``SEARCH_TRIGRAM_THRESHOLD``), whose location contains one of ``locations`` (ignoring
+    case) or is unknown, and whose job type is one of ``job_types`` or unknown. An empty list
+    is no filter on that field; role titles with no word in them match no pool Listing. At
+    most ``cap`` of them, newest first, plus every manual Listing private to the Student.
+    Sorted by Listing id."""
+    roles = [r for r in role_titles if r and r.strip()]
+    phrases = [p for p in (" ".join(search_tokens(r)) for r in roles) if p]
+    rows = await repo.candidate_scoring_inputs(
+        session,
+        owner_id,
+        role_tsquery=role_tsquery(roles),
+        role_phrases=phrases if roles else None,
+        locations=[loc.strip() for loc in locations if loc and loc.strip()],
+        job_types=[t for t in job_types if t],
+        threshold=get_settings().search_trigram_threshold,
+        cap=cap,
+    )
+    return [
+        CandidateInput(
+            listing_id,
+            # Array elements may be NULL; drop them (and empty strings), as get_scoring_input.
+            ScoringInput(
+                title,
+                tuple(sorted({s for s in skills if s})),
+                vocab_version,
+                tuple(sorted({lx for lx in lexemes if lx})),
+            ),
+        )
+        for listing_id, title, skills, vocab_version, lexemes in rows
+    ]
+
+
+async def lock_existing(
+    session: AsyncSession, listing_ids: Iterable[uuid.UUID], *, for_update: bool = False
+) -> list[uuid.UUID]:
+    """Lock the given Listings that still exist (in id order, until the transaction ends) and
+    return their ids. Default ``FOR KEY SHARE``: they cannot be deleted while rows that
+    reference them are written. ``for_update``: ``FOR NO KEY UPDATE``, as before writing
+    their relevance."""
+    return await repo.lock_existing(session, sorted(set(listing_ids)), for_update=for_update)
+
+
+async def has_pool_listing(session: AsyncSession, listing_ids: Iterable[uuid.UUID]) -> bool:
+    """Whether one of ``listing_ids`` is in the shared pool (not private to its collector)."""
+    return await repo.has_pool_listing(session, list(listing_ids))
+
+
 # --------------------------------------------------------------------------- provider runs (AD-12)
 #
 # ``start_provider_run``, ``poll_provider_run`` and ``reap_stale_runs`` open their own short

@@ -629,11 +629,37 @@ async def drain(queues: Iterable[str] = QUEUES, timeout: float | None = None) ->
 PRIORITY_DRAIN_TIMEOUT_SECONDS = 30
 
 
+# A priority job may enqueue a follow-up priority job (e.g. a recompute that must go again);
+# the drain runs again while that happens, at most this many rounds in all.
+PRIORITY_DRAIN_MAX_ROUNDS = 3
+
+_PRIORITY_PENDING = text(
+    f"SELECT EXISTS (SELECT 1 FROM job_outbox WHERE queue = '{PRIORITY_QUEUE}')"
+)
+
+
+async def _priority_outbox_pending() -> bool:
+    async with get_sessionmaker()() as session:
+        return bool((await session.execute(_PRIORITY_PENDING)).scalar())
+
+
 async def drain_priority_after_response() -> None:
     """Bounded in-process drain of the ``priority`` queue, run by routers as a post-response
-    background task after a Student-initiated change (AD-4.6). Never raises: a failed drain
-    is logged and the 5-minute cron drain picks the jobs up."""
+    background task after a Student-initiated change (AD-4.6). Each round flushes the outbox
+    and runs the ``priority`` queue; another round follows while the previous one left new
+    ``priority`` outbox rows (a job enqueued a follow-up), at most
+    :data:`PRIORITY_DRAIN_MAX_ROUNDS` rounds within :data:`PRIORITY_DRAIN_TIMEOUT_SECONDS` in
+    all. Never raises: a failed drain is logged and the 5-minute cron drain picks the jobs
+    up."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + PRIORITY_DRAIN_TIMEOUT_SECONDS
     try:
-        await drain(queues=(PRIORITY_QUEUE,), timeout=PRIORITY_DRAIN_TIMEOUT_SECONDS)
+        for _ in range(PRIORITY_DRAIN_MAX_ROUNDS):
+            remaining = deadline - loop.time()
+            if remaining <= WORKER_SHUTDOWN_GRACE_SECONDS + 1:
+                return
+            result = await drain(queues=(PRIORITY_QUEUE,), timeout=remaining)
+            if result.status != "completed" or not await _priority_outbox_pending():
+                return
     except Exception:
         logger.exception("priority_drain_failed")

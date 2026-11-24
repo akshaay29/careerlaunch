@@ -324,6 +324,28 @@ async def get_preferences(session: AsyncSession, owner_id: uuid.UUID) -> Prefere
     return result.scalar_one_or_none()
 
 
+_MATCHING_OWNERS = text(
+    """
+    SELECT owner_id FROM preferences
+    WHERE cardinality(role_titles) > 0 OR cardinality(locations) > 0
+       OR cardinality(job_types) > 0
+    UNION
+    SELECT p.owner_id FROM skill_profiles p
+    WHERE EXISTS (
+        SELECT 1 FROM unnest(p.extracted_skills || p.added_skills) AS s
+        WHERE s IS NOT NULL AND s <> '' AND NOT (s = ANY(p.removed_skills))
+    )
+    ORDER BY 1
+    """
+)
+
+
+async def owner_ids_with_matching_setup(session: AsyncSession) -> list[uuid.UUID]:
+    """Every owner whose Preferences set a filter (role titles, locations or job types) or
+    whose Skill Profile has an effective skill (``(extracted | added) - removed``)."""
+    return list((await session.execute(_MATCHING_OWNERS)).scalars())
+
+
 async def upsert_preferences(
     session: AsyncSession, owner_id: uuid.UUID, values: dict[str, Any]
 ) -> Preferences:
