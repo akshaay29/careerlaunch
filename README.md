@@ -505,6 +505,29 @@ draft is then never ingested again: it counts as `rejected`, is not an error and
 code 1 when there was no such takedown). The script runs only with `ENVIRONMENT` local or ci
 unless you pass `--yes-prod`.
 
+## Search (FR-13, NFR-2, Story 2.6)
+
+`GET /api/v1/listings/search?q=&limit=&offset=` (`searchListings`) searches the Listings a
+Student can see (the pool plus their own private ones, never expired or taken-down ones) and
+returns `ListingOut` items, best match first, with `next_offset` (null when there are no
+more). `limit` is 1 to 50 (default 20); `offset` is 0 to 200 (search shows the best matches,
+not the whole pool). `/listings?q=...` runs the same search in the web app.
+
+- The query is Unicode-normalised, lower-cased and cut into word tokens (letters and digits;
+  at most 8 tokens of 40 characters). An empty query, one with fewer than 2 usable characters,
+  or one over 100 characters is a 422. Only sanitised tokens reach the prefix `to_tsquery`
+  (`a:* & b:*`), as a bind parameter; the application does not log or store the query text (only its length); the URL still carries it, so access logs and browser history can.
+- A Listing matches when its `search_doc` (title, company, skills, description lexemes)
+  matches every token as a word prefix, **or** the `pg_trgm` `word_similarity` of the query to
+  `lower(title || ' ' || company)` (the stored column `listings.title_company`, GIN trigram
+  index) reaches `SEARCH_TRIGRAM_THRESHOLD` (default 0.35, 0.1 to 0.9), so "bakend intrn"
+  finds "Backend Intern". Full-text matches rank above similarity-only ones, by `ts_rank_cd`
+  plus similarity; ties break by `first_seen_at DESC, id DESC`.
+- Migration `0016_listing_search` enables `pg_trgm` in the `extensions` schema when it exists
+  (Supabase) and in `public` otherwise (plain Postgres); the queries look the schema up at run
+  time. `api/tests/test_listing_search_perf.py` seeds about 30,000 Listings and asserts typical
+  queries finish in under 500 ms.
+
 ## CI (`.github/workflows/ci.yml`)
 
 On every push and PR: Postgres 17 service + Supabase roles SQL → `alembic upgrade head` →

@@ -104,3 +104,68 @@ export function mergeListingPages(current: ListingOut[], next: ListingOut[]): Li
   const seen = new Set(current.map((l) => l.id));
   return [...current, ...next.filter((l) => !seen.has(l.id))];
 }
+
+// ---------------------------------------------------------------- keyword search (Story 2.6)
+
+/** The search rules, mirroring the API (`listings.service.search`). */
+export const SEARCH_MAX_QUERY_CHARS = 100;
+export const SEARCH_MIN_QUERY_CHARS = 2;
+export const SEARCH_MAX_TOKENS = 8;
+export const SEARCH_MAX_TOKEN_CHARS = 40;
+export const SEARCH_PAGE_SIZE = 20;
+export const SEARCH_INVALID_MESSAGE = `Enter at least ${SEARCH_MIN_QUERY_CHARS} letters or digits to search for (at most ${SEARCH_MAX_QUERY_CHARS} characters).`;
+
+/**
+ * The word tokens the API will search for: Unicode-normalised (NFKC), lower-cased, split on
+ * anything that is not a letter or a digit; at most 8 tokens of at most 40 characters.
+ */
+export function searchTokens(query: string): string[] {
+  return query
+    .normalize("NFKC")
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((word) => word.length > 0)
+    .slice(0, SEARCH_MAX_TOKENS)
+    .map((word) => Array.from(word).slice(0, SEARCH_MAX_TOKEN_CHARS).join(""));
+}
+
+export type SearchQuery = { ok: true; query: string } | { ok: false; message: string };
+
+/**
+ * Checks what a Student typed with the API's rules. `query` is the trimmed text to send and
+ * to put in the URL; an empty, one-character, symbols-only or over-long query is not ok.
+ */
+export function checkSearchQuery(raw: string | null | undefined): SearchQuery {
+  const query = (raw ?? "").trim();
+  const usable = searchTokens(query).join(" ");
+  if (
+    Array.from(query).length > SEARCH_MAX_QUERY_CHARS ||
+    Array.from(usable).length < SEARCH_MIN_QUERY_CHARS
+  ) {
+    return { ok: false, message: SEARCH_INVALID_MESSAGE };
+  }
+  return { ok: true, query };
+}
+
+/** The `q` URL parameter as a plain trimmed string ("" when absent; the first when repeated). */
+export function queryFromParam(value: string | string[] | null | undefined): string {
+  const first = Array.isArray(value) ? value[0] : value;
+  return (first ?? "").trim();
+}
+
+/** The Listings page for a search; the plain browse page when the query is empty. */
+export function searchHref(query: string): string {
+  const q = query.trim();
+  return q ? `${LISTINGS_PATH}?q=${encodeURIComponent(q)}` : LISTINGS_PATH;
+}
+
+/** Shown when a search finds nothing. The query is untrusted: render the result as text. */
+export function searchEmptyMessage(query: string): string {
+  return `No Listings match “${query}”. Try fewer or broader terms, or check the spelling.`;
+}
+
+/** Announced to screen readers when search results arrive or grow: "20 Listings shown, more available". */
+export function resultCountMessage(count: number, more: boolean): string {
+  const noun = count === 1 ? "Listing" : "Listings";
+  return `${count} ${noun} shown${more ? ", more available" : ""}.`;
+}

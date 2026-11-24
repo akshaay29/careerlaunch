@@ -93,3 +93,13 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-2-5-expire-evict-and-take-down-listings.md`
   summary: Clear `expired_at` on a re-sighting by a non-contributing collector, re-read the active count each eviction batch, and record each job's ops event in the same transaction as its last batch.
   evidence: The upsert clears `expired_at` only for an authorised writer, so a still-seen Listing can be purged; evict reads the count once; a retried partial job undercounts.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-6-search-listings-by-keyword.md`
+  summary: Make typo tolerance work when a misspelling is mixed with another word ("bakend intrn python"), e.g. trigram match per token, and decide how short language names ("c++", ".net", "c#") are searched.
+  evidence: Trigram `word_similarity` compares the whole phrase to title and company only, so extra tokens dilute it; the 2-character rule and tokenizer reject or split such queries.
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-6-search-listings-by-keyword.md`
+  summary: Run the search tests in CI with an `extensions` schema present (the Supabase placement of `pg_trgm`), and add a component test for the `/listings?q=` wiring once `web` has a harness.
+  evidence: CI places `pg_trgm` in `public`; the Supabase branch was verified by hand only. No web component harness exists.
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-6-search-listings-by-keyword.md`
+  summary: Tell the Student when results stop at the offset cap, treat combining marks as part of words, share tokenizer test vectors between the API and web, and add rate limiting for search.
+  evidence: `next_offset` becomes null at 200 with no message; `str.isalnum` and `[\p{L}\p{N}]` split Indic words; the two tokenizers are mirrored by hand; no endpoint is rate limited yet.

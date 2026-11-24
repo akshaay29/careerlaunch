@@ -19,6 +19,7 @@ from app.modules.listings import service
 from app.modules.listings.schemas import (
     ListingList,
     ListingOut,
+    ListingSearchResults,
     ListingSkill,
     ProviderUsage,
     ProviderUsageCaps,
@@ -68,6 +69,27 @@ async def list_listings(
     """Listings you can see (the shared pool and your own private ones), newest first."""
     page = await service.browse(session, actor.id, limit=limit, cursor=cursor)
     return ListingList(items=[_out(i) for i in page.items], next_cursor=page.next_cursor)
+
+
+# Declared before `/listings/{listing_id}` so "search" is not read as an id.
+@router.get(
+    "/listings/search",
+    response_model=ListingSearchResults,
+    operation_id="searchListings",
+    responses={422: {"description": "The query, limit or offset is invalid", **_PROBLEM}},
+)
+async def search_listings(
+    actor: CurrentActor,
+    session: Session,
+    q: Annotated[str, Query(max_length=service.SEARCH_MAX_QUERY_CHARS)],
+    limit: Annotated[int, Query(ge=1, le=50)] = 20,
+    offset: Annotated[int, Query(ge=0, le=service.SEARCH_MAX_OFFSET)] = 0,
+) -> ListingSearchResults:
+    """Keyword search over the Listings you can see (the shared pool and your own private
+    ones), not expired, best match first. All words must match (as prefixes); close
+    misspellings still match. ``q`` needs 2 to 100 characters with letters or digits."""
+    page = await service.search(session, actor.id, query=q, limit=limit, offset=offset)
+    return ListingSearchResults(items=[_out(i) for i in page.items], next_offset=page.next_offset)
 
 
 @router.get(

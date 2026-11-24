@@ -5,8 +5,15 @@ import { test } from "node:test";
 import type { ListingOut } from "../api/types.gen.ts";
 import {
   LISTINGS_EMPTY_MESSAGE,
+  SEARCH_INVALID_MESSAGE,
   applyLabel,
+  checkSearchQuery,
   listingMeta,
+  queryFromParam,
+  resultCountMessage,
+  searchEmptyMessage,
+  searchHref,
+  searchTokens,
   NOT_AFFILIATED_NOTICE,
   formatDate,
   formatJobType,
@@ -131,4 +138,59 @@ test("merge pages without duplicates", () => {
     merged.map((l) => l.id),
     ["a", "b", "c"],
   );
+});
+
+test("search tokens mirror the API rules", () => {
+  assert.deepEqual(searchTokens("  Backend,  INTERN!! "), ["backend", "intern"]);
+  assert.deepEqual(searchTokens("ＢＡＣＫＥＮＤ"), ["backend"]);
+  assert.deepEqual(searchTokens("a:* & !b | c"), ["a", "b", "c"]);
+  assert.deepEqual(searchTokens("naïve café 数据"), ["naïve", "café", "数据"]);
+  assert.deepEqual(searchTokens("'); drop table listings; --"), ["drop", "table", "listings"]);
+  assert.deepEqual(
+    searchTokens(Array.from({ length: 20 }, (_, n) => `word${n}`).join(" ")),
+    Array.from({ length: 8 }, (_, n) => `word${n}`),
+  );
+  assert.deepEqual(searchTokens("y".repeat(90)), ["y".repeat(40)]);
+  assert.deepEqual(searchTokens(""), []);
+});
+
+test("checkSearchQuery accepts usable queries and trims them", () => {
+  assert.deepEqual(checkSearchQuery("  bakend intrn "), { ok: true, query: "bakend intrn" });
+  assert.deepEqual(checkSearchQuery("c#"), { ok: false, message: SEARCH_INVALID_MESSAGE });
+  assert.deepEqual(checkSearchQuery("go"), { ok: true, query: "go" });
+  assert.deepEqual(checkSearchQuery("x".repeat(100)), { ok: true, query: "x".repeat(100) });
+});
+
+test("checkSearchQuery rejects what the API rejects", () => {
+  for (const bad of ["", "   ", "a", " a ", "!!!", "x".repeat(101), null, undefined]) {
+    assert.deepEqual(checkSearchQuery(bad), { ok: false, message: SEARCH_INVALID_MESSAGE }, String(bad));
+  }
+});
+
+test("queryFromParam reads the q parameter", () => {
+  assert.equal(queryFromParam(undefined), "");
+  assert.equal(queryFromParam(null), "");
+  assert.equal(queryFromParam("  intern "), "intern");
+  assert.equal(queryFromParam(["first", "second"]), "first");
+  assert.equal(queryFromParam([]), "");
+});
+
+test("searchHref builds a shareable URL and falls back to browse", () => {
+  assert.equal(searchHref("backend intern"), "/listings?q=backend%20intern");
+  assert.equal(searchHref("c++ & <b>"), "/listings?q=c%2B%2B%20%26%20%3Cb%3E");
+  assert.equal(searchHref("   "), "/listings");
+  assert.equal(searchHref(""), "/listings");
+});
+
+test("the empty search message is neutral and echoes the query as text", () => {
+  assert.equal(
+    searchEmptyMessage("zzzz"),
+    "No Listings match “zzzz”. Try fewer or broader terms, or check the spelling.",
+  );
+  assert.match(searchEmptyMessage("<img src=x>"), /<img src=x>/);
+});
+
+test("the result count message is announced with the paging state", () => {
+  assert.equal(resultCountMessage(1, false), "1 Listing shown.");
+  assert.equal(resultCountMessage(20, true), "20 Listings shown, more available.");
 });

@@ -7,9 +7,26 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import case, func, or_, select, text, tuple_, update
+from sqlalchemy import (
+    Float,
+    Text,
+    bindparam,
+    case,
+    false,
+    func,
+    literal_column,
+    or_,
+    select,
+    text,
+    true,
+    tuple_,
+    union_all,
+    update,
+)
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import quoted_name
+from sqlalchemy.sql.functions import Function
 
 from app.modules.listings.models import Listing, ProviderRun, Source
 
@@ -189,6 +206,125 @@ async def browse_page(
     stmt = (
         stmt.order_by(Listing.first_seen_at.desc(), Listing.id.desc())
         .limit(limit)
+        .execution_options(populate_existing=True)
+    )
+    return [(listing, label) for listing, label in (await session.execute(stmt)).all()]
+
+
+_trgm_schema_cache: str | None = None
+
+
+async def _trgm_schema(session: AsyncSession) -> str:
+    """The schema ``pg_trgm`` lives in (``extensions`` on Supabase, ``public`` on plain
+    Postgres, or wherever it was already enabled). The session's ``search_path`` is ``app``,
+    so its functions and operators are always schema-qualified."""
+    global _trgm_schema_cache
+    if _trgm_schema_cache is None:
+        name = (
+            await session.execute(
+                text(
+                    "SELECT n.nspname FROM pg_extension e "
+                    "JOIN pg_namespace n ON n.oid = e.extnamespace WHERE e.extname = 'pg_trgm'"
+                )
+            )
+        ).scalar_one_or_none()
+        if name is None:
+            raise RuntimeError("the pg_trgm extension is not enabled (run the migrations)")
+        _trgm_schema_cache = str(name)
+    return _trgm_schema_cache
+
+
+def _quote_ident(name: str) -> str:
+    return '"' + name.replace('"', '""') + '"'
+
+
+def trigram_expressions(schema: str, phrase: Any, title_company: Any) -> tuple[Any, Any]:
+    """``(similar, similarity)`` for ``phrase`` against ``title_company``: the ``<%`` test and
+    ``word_similarity()``, both qualified with ``schema`` (always quoted)."""
+    similar = phrase.op(f"OPERATOR({_quote_ident(schema)}.<%)")(title_company)
+    # `quote=False`: the name is already quoted, so SQLAlchemy emits it verbatim.
+    similarity = Function(
+        quoted_name(f"{_quote_ident(schema)}.word_similarity", False),
+        phrase,
+        title_company,
+        type_=Float,
+    )
+    return similar, similarity
+
+
+async def tsquery_has_lexemes(session: AsyncSession, tsquery: str) -> bool:
+    """Whether ``to_tsquery('english', tsquery)`` keeps any term (a query of only stop words
+    such as "the" or "to be" is empty and would match nothing by full text)."""
+    nodes = (
+        await session.execute(text("SELECT numnode(to_tsquery('english', :q))"), {"q": tsquery})
+    ).scalar_one()
+    return bool(nodes)
+
+
+async def search_page(
+    session: AsyncSession,
+    actor_id: uuid.UUID,
+    *,
+    tsquery: str,
+    phrase: str,
+    threshold: float,
+    limit: int,
+    offset: int,
+) -> list[tuple[Listing, str]]:
+    """Listings visible to ``actor_id`` and not expired that match, best first.
+
+    ``tsquery`` is a prefix tsquery string built only from sanitised tokens and ``phrase`` the
+    same tokens joined by spaces; both reach Postgres as bind parameters. A Listing matches
+    when its ``search_doc`` matches ``tsquery``, or the trigram word similarity of ``phrase``
+    to ``lower(title || ' ' || company)`` reaches ``threshold``. Full-text matches rank above
+    similarity-only ones, then by ``ts_rank_cd`` plus similarity, then newest first (so pages
+    are stable)."""
+    schema = await _trgm_schema(session)
+    # The `<%` operator (which the trigram index serves) reads its threshold from this setting.
+    # With Postgres' default `random_page_cost` (4, tuned for spinning disks) the planner prefers
+    # a sequential scan that evaluates the trigram test on every row (over 100 ms at 30,000
+    # Listings); the pool's database is on SSD, so plan with the realistic cost and let both GIN
+    # indexes answer. LOCAL: both end with the transaction.
+    await session.execute(
+        text(
+            "SELECT set_config('pg_trgm.word_similarity_threshold', :t, true), "
+            "set_config('random_page_cost', '1.1', true)"
+        ),
+        {"t": repr(float(threshold))},
+    )
+    tsq = func.to_tsquery(
+        literal_column("'english'::regconfig"), bindparam("tsq", tsquery, type_=Text)
+    )
+    phrase_param = bindparam("phrase", phrase, type_=Text)
+    title_company = literal_column("listings.title_company", type_=Text)
+    full_text = Listing.search_doc.op("@@")(tsq)
+    similar, similarity = trigram_expressions(schema, phrase_param, title_company)
+    # Candidates come from the two GIN indexes separately (full text, trigram), so the large
+    # out-of-line ``search_doc`` values are read only for matching rows; one OR over the table
+    # makes the planner scan every row and detoast every ``search_doc``.
+    matched = union_all(
+        select(Listing.id.label("id"), true().label("ft")).where(full_text),
+        select(Listing.id.label("id"), false().label("ft")).where(similar),
+    ).subquery("matched")
+    cand = (
+        select(matched.c.id, func.bool_or(matched.c.ft).label("ft"))
+        .group_by(matched.c.id)
+        .cte("cand")
+    )
+    rank = case((cand.c.ft, func.ts_rank_cd(Listing.search_doc, tsq)), else_=0.0)
+    stmt = (
+        select(Listing, Source.label)
+        .join(cand, cand.c.id == Listing.id)
+        .join(Source, Source.id == Listing.source)
+        .where(_visible_to(actor_id), Listing.expired_at.is_(None))
+        .order_by(
+            cand.c.ft.desc(),
+            (rank + similarity).desc(),
+            Listing.first_seen_at.desc(),
+            Listing.id.desc(),
+        )
+        .limit(limit)
+        .offset(offset)
         .execution_options(populate_existing=True)
     )
     return [(listing, label) for listing, label in (await session.execute(stmt)).all()]

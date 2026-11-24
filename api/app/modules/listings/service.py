@@ -13,6 +13,8 @@ Takes the session; never commits (routers and tasks commit).
   (``accounts.service.pause_provider``). :func:`provider_usage` is the Student's usage view.
 * Browsing returns only Listings visible to the actor (pool, or private to them) that are
   not expired.
+* Story 2.6: :func:`search` is keyword search over the same visible, non-expired pool
+  (full-text plus trigram similarity); the query is reduced to plain word tokens first.
 * Story 2.5: the daily jobs (:func:`expire_listings`, :func:`purge_listings`,
   :func:`evict_listings`, :func:`check_quota`), the hooks later epics use (:func:`pin`,
   :func:`unpin`, :func:`set_relevance`) and the owner's takedown (:func:`block`,
@@ -24,6 +26,7 @@ import binascii
 import logging
 import math
 import re
+import unicodedata
 import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -365,6 +368,76 @@ async def browse(
     page = rows[:limit]
     next_cursor = encode_cursor(page[-1][0]) if len(rows) > limit else None
     return BrowsePage([BrowseItem(listing, label) for listing, label in page], next_cursor)
+
+
+# --------------------------------------------------------------------------- search (Story 2.6)
+
+SEARCH_MAX_QUERY_CHARS = 100
+SEARCH_MIN_QUERY_CHARS = 2
+SEARCH_MAX_TOKENS = 8
+SEARCH_MAX_TOKEN_CHARS = 40
+SEARCH_MAX_OFFSET = 200
+SEARCH_MAX_LIMIT = 50
+INVALID_QUERY = (
+    f"Enter at least {SEARCH_MIN_QUERY_CHARS} letters or digits to search for "
+    f"(at most {SEARCH_MAX_QUERY_CHARS} characters)."
+)
+
+
+def search_tokens(query: str) -> list[str]:
+    """The word tokens of a search query: Unicode-normalised (NFKC), lower-cased, split on
+    anything that is not a letter or a digit; at most 8 tokens of at most 40 characters.
+    ``web/src/lib/listings.ts`` mirrors this."""
+    text = unicodedata.normalize("NFKC", query).lower()
+    words = "".join(c if c.isalnum() else " " for c in text).split()
+    return [w[:SEARCH_MAX_TOKEN_CHARS] for w in words[:SEARCH_MAX_TOKENS]]
+
+
+@dataclass(frozen=True)
+class SearchPage:
+    items: list[BrowseItem]
+    next_offset: int | None
+
+
+async def search(
+    session: AsyncSession, actor_id: uuid.UUID, *, query: str, limit: int, offset: int
+) -> SearchPage:
+    """Listings visible to ``actor_id``, not expired, that match ``query``, best match first.
+    All tokens must match (as word prefixes); a near-miss spelling still matches through
+    trigram similarity on the title and company. ``next_offset`` is set when more matches
+    follow and are within the offset cap. Raises :class:`InvalidInputError` for a query with
+    no usable token (including only stop words), one over 100 characters, a limit outside
+    1 to 50, or an offset past the cap. The query text is not logged or stored (its length is)."""
+    field = ["query", "q"]
+    if len(query) > SEARCH_MAX_QUERY_CHARS:
+        raise InvalidInputError(field, INVALID_QUERY)
+    tokens = search_tokens(query)
+    phrase = " ".join(tokens)
+    if len(phrase) < SEARCH_MIN_QUERY_CHARS:
+        raise InvalidInputError(field, INVALID_QUERY)
+    if not 1 <= limit <= SEARCH_MAX_LIMIT:
+        raise InvalidInputError(["query", "limit"], f"limit must be 1 to {SEARCH_MAX_LIMIT}.")
+    if not 0 <= offset <= SEARCH_MAX_OFFSET:
+        raise InvalidInputError(["query", "offset"], f"offset must be 0 to {SEARCH_MAX_OFFSET}.")
+    # Only alphanumeric tokens reach the string, so it carries no tsquery syntax.
+    tsquery = " & ".join(f"{t}:*" for t in tokens)
+    # A query of only stop words ("the", "to be") has no term to search for.
+    if not await repo.tsquery_has_lexemes(session, tsquery):
+        raise InvalidInputError(field, INVALID_QUERY)
+    logger.info("listings.search chars=%d tokens=%d", len(query), len(tokens))
+    rows = await repo.search_page(
+        session,
+        actor_id,
+        tsquery=tsquery,
+        phrase=phrase,
+        threshold=get_settings().search_trigram_threshold,
+        limit=limit + 1,
+        offset=offset,
+    )
+    page = rows[:limit]
+    following = offset + limit
+    next_offset = following if len(rows) > limit and following <= SEARCH_MAX_OFFSET else None
+    return SearchPage([BrowseItem(listing, label) for listing, label in page], next_offset)
 
 
 async def ensure_source(session: AsyncSession, source_id: str, label: str) -> None:

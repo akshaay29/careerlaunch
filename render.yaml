@@ -91,3 +91,6 @@ services:
         value: "524288000"
       - key: DB_QUOTA_ALERT_PERCENT
         value: "80"
+      # Keyword search (Story 2.6).
+      - key: SEARCH_TRIGRAM_THRESHOLD
+        value: "0.35"
