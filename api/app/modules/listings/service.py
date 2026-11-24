@@ -35,7 +35,7 @@ from decimal import Decimal
 from typing import Any
 from urllib.parse import urlsplit
 
-from pydantic import SecretStr
+from pydantic import SecretStr, ValidationError
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -68,7 +68,13 @@ from app.ports.provider_runner import (
     get_provider_runner,
 )
 from app.ports.source_adapter import (
+    MANUAL_SOURCE,
+    MAX_COMPANY_CHARS,
+    MAX_LOCATION_CHARS,
+    MAX_TITLE_CHARS,
+    MAX_URL_CHARS,
     SOURCE_ID_PATTERN,
+    JobType,
     ListingDraft,
     SourceAdapter,
     SourceQuery,
@@ -97,9 +103,10 @@ class ListingBlockedError(Exception):
 DEFAULT_PORTS = {"http": 80, "https": 443}
 
 
-def canonical_url(url: str) -> str:
+def canonical_url(url: str, *, keep_query: bool = False) -> str:
     """The form a URL takedown matches on: lower-cased scheme and host, the port unless it is
     the scheme's default, no userinfo, query or fragment, and no trailing slash on the path.
+    With ``keep_query`` (manual de-duplication, Story 4.3) the query string is kept as written.
     ``ValueError`` when the URL cannot be parsed."""
     parts = urlsplit(url.strip())
     host = parts.hostname or ""
@@ -112,7 +119,8 @@ def canonical_url(url: str) -> str:
         number = None
     # The scheme's default port is the same URL without it.
     port = f":{number}" if number and number != DEFAULT_PORTS.get(scheme) else ""
-    return f"{scheme}://{host}{port}{parts.path.rstrip('/')}"
+    query = f"?{parts.query}" if keep_query and parts.query else ""
+    return f"{scheme}://{host}{port}{parts.path.rstrip('/')}{query}"
 
 
 def normalize_company(company: str) -> str:
@@ -122,6 +130,20 @@ def normalize_company(company: str) -> str:
 
 def _visible_to_collector(result: repo.UpsertResult, collected_by: uuid.UUID | None) -> bool:
     return result.visibility_owner_id is None or result.visibility_owner_id == collected_by
+
+
+async def _draft_blocked(session: AsyncSession, draft: ListingDraft) -> bool:
+    """Whether a takedown matches ``draft`` (by Listing, canonical URL or company)."""
+    # Shared with every ingest, exclusive for block/unblock: a takedown committed before this
+    # point is seen by the check, one still running finishes after the caller's write.
+    await repo.lock_blocks(session, exclusive=False)
+    return await repo.is_blocked(
+        session,
+        source=draft.source,
+        source_job_id=draft.source_job_id,
+        url=canonical_url(draft.url) if draft.url is not None else None,
+        company=normalize_company(draft.company_raw),
+    )
 
 
 async def _upsert(
@@ -137,16 +159,7 @@ async def _upsert(
         core_skills.normalize(f"{draft.title}\n{draft.description}")
     )
     try:
-        # Shared with every ingest, exclusive for block/unblock: a takedown committed before
-        # this point is seen by the check, one still running finishes after this upsert.
-        await repo.lock_blocks(session, exclusive=False)
-        if await repo.is_blocked(
-            session,
-            source=draft.source,
-            source_job_id=draft.source_job_id,
-            url=canonical_url(draft.url),
-            company=normalize_company(draft.company_raw),
-        ):
+        if await _draft_blocked(session, draft):
             raise ListingBlockedError
         return await repo.upsert_listing(
             session,
@@ -493,6 +506,28 @@ async def effective_deadline(
     """The effective deadline of one Listing visible to ``owner_id`` (see
     :func:`effective_deadlines`); None when it has none or is not visible to the owner."""
     return (await effective_deadlines(session, owner_id, [listing_id])).get(listing_id)
+
+
+# What :func:`tracker_facts` returns per Listing (deadline, manual, description, available).
+ListingFacts = repo.ListingFacts
+
+
+async def tracker_facts(
+    session: AsyncSession,
+    owner_id: uuid.UUID,
+    listing_ids: Iterable[uuid.UUID],
+    *,
+    with_description: bool = False,
+) -> dict[uuid.UUID, ListingFacts]:
+    """``{listing_id: ListingFacts}`` for the Tracker, in one query: each given Listing
+    visible to ``owner_id`` and not expired (``available``), plus the owner's own manual
+    Listings even when expired (``available`` False); others are absent. Each with its
+    effective deadline (as :func:`effective_deadlines`), whether it is the owner's own manual
+    Listing (Story 4.3) and, with ``with_description``, that manual Listing's private
+    description. Never another Student's description."""
+    return await repo.visible_facts(
+        session, owner_id, sorted(set(listing_ids)), with_description=with_description
+    )
 
 
 @dataclass(frozen=True)
@@ -1492,6 +1527,9 @@ def _same_url(stored: str, canonical: str) -> bool:
 async def _blocked_listing_ids(
     session: AsyncSession, kind: str, source: str | None, value: str
 ) -> list[uuid.UUID]:
+    """The Listings a takedown deletes now. A URL or company takedown never sweeps a
+    Student's private manual Listing (Story 4.3: never distributed); the block still refuses
+    new manual adds."""
     if kind == "listing":
         assert source is not None
         return await repo.listing_ids_by_source_job(session, source, value)
@@ -1610,3 +1648,201 @@ async def on_provider_key_changed(session: AsyncSession, event: ProviderKeyChang
     await enqueue(
         session, COLLECT, collect_key(event.owner_id, local_day(tz)), owner_id=event.owner_id
     )
+
+
+# --------------------------------------------------------------------------- manual Listings (4.3)
+
+MAX_MANUAL_DESCRIPTION_CHARS = 4000
+# The earliest deadline accepted (a guard against typos such as year 0026).
+MIN_MANUAL_DEADLINE = date(2000, 1, 1)
+MANUAL_BLOCKED = "This job can't be added."
+TITLE_REQUIRED = "Enter a title or a link to the job."
+INVALID_LINK = "Enter a full link starting with http:// or https://."
+DERIVED_TITLE_PREFIX = "Job at "
+
+# ListingDraft field -> request body field.
+_MANUAL_FIELDS = {
+    "url": "url",
+    "title": "title",
+    "company_raw": "company",
+    "location_raw": "location",
+    "job_type": "job_type",
+    "deadline": "deadline",
+    "description": "description",
+}
+
+
+def raw_host(url: str) -> str:
+    """The host of an http(s) link exactly as written, lower-cased: the authority after
+    ``scheme://`` up to ``/``, ``?`` or ``#``, without userinfo or ``:port`` (an IPv6 host keeps
+    its brackets). No IDNA or other normalisation, so it reads as the Student typed it.
+    ``web/src/lib/manual-listing.ts`` (``linkHost``) mirrors this."""
+    rest = url.strip().split("://", 1)[-1]
+    authority = re.split(r"[/?#]", rest, maxsplit=1)[0].rpartition("@")[2]
+    if authority.startswith("[") and "]" in authority:
+        host = authority[: authority.index("]") + 1]
+    else:
+        host = authority.split(":", 1)[0]
+    return host.lower()
+
+
+def derived_title(url: str) -> str:
+    """The title of a job added by link only: ``Job at <host>`` (:func:`raw_host`)."""
+    return f"{DERIVED_TITLE_PREFIX}{raw_host(url)}"
+
+
+def _field_error(field: str, msg: str) -> InvalidInputError:
+    return InvalidInputError(["body", field], msg)
+
+
+def _clean(value: str | None) -> str:
+    return value.strip() if value is not None else ""
+
+
+def _manual_draft(
+    *,
+    url: str | None,
+    title: str | None,
+    company: str | None,
+    location: str | None,
+    job_type: JobType | None,
+    deadline: date | None,
+    description: str | None,
+) -> ListingDraft:
+    """The validated ``manual`` draft of a job a Student adds (a 422 naming the field
+    otherwise). Its ``source_job_id`` is a new UUID7: one Listing per add."""
+    link = _clean(url) or None
+    if link is not None and len(link) > MAX_URL_CHARS:
+        raise _field_error("url", f"The link must be {MAX_URL_CHARS} characters or fewer.")
+    name = _clean(title)
+    if len(name) > MAX_TITLE_CHARS:
+        raise _field_error("title", f"The title must be {MAX_TITLE_CHARS} characters or fewer.")
+    if len(_clean(company)) > MAX_COMPANY_CHARS:
+        raise _field_error(
+            "company", f"The company must be {MAX_COMPANY_CHARS} characters or fewer."
+        )
+    if len(_clean(location)) > MAX_LOCATION_CHARS:
+        raise _field_error(
+            "location", f"The location must be {MAX_LOCATION_CHARS} characters or fewer."
+        )
+    if deadline is not None and deadline < MIN_MANUAL_DEADLINE:
+        raise _field_error("deadline", "The deadline cannot be before 1 Jan 2000.")
+    # Code points (Python ``len``), as the web counter counts them.
+    text = _clean(description)
+    if len(text) > MAX_MANUAL_DESCRIPTION_CHARS:
+        raise _field_error(
+            "description",
+            f"The description must be {MAX_MANUAL_DESCRIPTION_CHARS} characters or fewer.",
+        )
+    if not name and link is None:
+        raise _field_error("title", TITLE_REQUIRED)
+    try:
+        if not name:
+            assert link is not None
+            # Check the link first, so a bad one is reported on ``url``, not on the title.
+            ListingDraft(source=MANUAL_SOURCE, source_job_id="check", url=link, title="check")
+            name = derived_title(link)[:MAX_TITLE_CHARS]
+        return ListingDraft(
+            source=MANUAL_SOURCE,
+            source_job_id=str(uuid.uuid7()),
+            url=link,
+            title=name,
+            company_raw=_clean(company),
+            location_raw=_clean(location),
+            job_type=job_type,
+            deadline=deadline,
+            description=text,
+        )
+    except ValidationError as exc:
+        # Never the input itself: it may be the description.
+        error = exc.errors(include_input=False, include_url=False, include_context=False)[0]
+        loc = error.get("loc") or ()
+        field = _MANUAL_FIELDS.get(str(loc[0]) if loc else "", "url")
+        if field == "url":
+            raise _field_error("url", INVALID_LINK) from None
+        raise _field_error(field, str(error.get("msg") or "This value is not valid.")) from None
+
+
+async def _existing_manual(
+    session: AsyncSession, owner_id: uuid.UUID, url: str
+) -> uuid.UUID | None:
+    """The owner's own manual Listing (expired or not) with the same de-duplication key: the
+    canonical URL with its query string kept (``?gh_jid=1`` and ``?gh_jid=2`` are two jobs),
+    or None."""
+    try:
+        wanted = canonical_url(url, keep_query=True)
+    except ValueError:
+        return None
+    for listing_id, stored in await repo.manual_urls(session, owner_id):
+        try:
+            if canonical_url(stored, keep_query=True) == wanted:
+                return listing_id
+        except ValueError:
+            continue
+    return None
+
+
+async def create_manual_listing(
+    session: AsyncSession,
+    owner_id: uuid.UUID,
+    *,
+    url: str | None,
+    title: str | None,
+    company: str | None,
+    location: str | None,
+    job_type: JobType | None,
+    deadline: date | None,
+    description: str | None,
+    reuse_existing: bool = True,
+) -> tuple[uuid.UUID, bool]:
+    """A job the Student found on another site, stored as a manual Listing private to them
+    (FR-18, AD-7). Returns ``(listing_id, reused)``.
+
+    Needs a title or a link (without a title it is ``Job at <host>``): title 1 to 300
+    characters, description at most 4,000 characters (code points), deadline not before
+    2000-01-01, link an absolute http(s) URL; anything else is a 422 naming the field. A
+    draft matching a takedown is a 422 ("This job can't be added") and nothing is written.
+    With ``reuse_existing``, when the Student already has a manual Listing (expired or not)
+    with the same canonical URL and query string, that one is returned (``reused`` True) and
+    nothing changes; the caller passes False to add a new one anyway (its old Listing has no
+    Application).
+
+    Otherwise the draft goes through :func:`ingest_draft` like any other (skills and
+    ``search_doc`` from the title and description, the takedown check, ``ListingsIngested``)
+    but never into the pool (``contributes_to_pool=False``: visible to the owner only), and
+    the description is kept in ``private_description`` for the owner alone. The link is
+    stored, never fetched; the description is never logged. Never commits."""
+    draft = _manual_draft(
+        url=url,
+        title=title,
+        company=company,
+        location=location,
+        job_type=job_type,
+        deadline=deadline,
+        description=description,
+    )
+    await repo.lock_manual_adds(session, owner_id)
+    blocked = _field_error("url" if draft.url is not None else "company", MANUAL_BLOCKED)
+    # Also before reusing one: a link (or company) taken down since is refused.
+    if await _draft_blocked(session, draft):
+        raise blocked
+    if reuse_existing and draft.url is not None:
+        existing = await _existing_manual(session, owner_id, draft.url)
+        if existing is not None:
+            return existing, True
+    stored = await ingest_draft(session, draft, collected_by=owner_id, contributes_to_pool=False)
+    if stored is None:
+        raise blocked
+    listing_id, _ = stored
+    if draft.description:
+        await repo.set_private_description(session, owner_id, listing_id, draft.description)
+    return listing_id, False
+
+
+async def delete_manual_listing(
+    session: AsyncSession, owner_id: uuid.UUID, listing_id: uuid.UUID
+) -> bool:
+    """Delete ``listing_id`` when it is the owner's own manual Listing (its stored scores
+    cascade); a pool Listing or anyone else's is left alone (False). The Tracker calls it
+    when the Application holding the manual Listing is deleted. Never commits."""
+    return await repo.delete_manual(session, owner_id, listing_id)

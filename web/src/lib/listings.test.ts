@@ -6,6 +6,7 @@ import type { ListingOut } from "../api/types.gen.ts";
 import {
   LISTINGS_EMPTY_MESSAGE,
   SEARCH_INVALID_MESSAGE,
+  ADDED_BY_YOU,
   applyLabel,
   checkSearchQuery,
   listingMeta,
@@ -23,6 +24,7 @@ import {
   mergeListingPages,
   safeExternalUrl,
   sourceAttribution,
+  sourceLine,
 } from "./listings.ts";
 
 function listing(id: string, overrides: Partial<ListingOut> = {}): ListingOut {
@@ -52,6 +54,9 @@ test("copy", () => {
 test("manual Listings name no Source", () => {
   const manual = listing("m", { source: "manual", source_label: "Manual" });
   assert.equal(sourceAttribution(manual), null);
+  assert.equal(sourceLine(manual), ADDED_BY_YOU);
+  assert.equal(ADDED_BY_YOU, "Added by you");
+  assert.equal(sourceLine(listing("a")), "via LinkedIn");
   assert.equal(applyLabel(manual), "Apply");
   assert.equal(applyLabel(listing("a")), "Apply on LinkedIn");
   assert.equal(

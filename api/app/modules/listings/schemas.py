@@ -23,7 +23,8 @@ class ListingSkill(BaseModel):
 class ListingOut(BaseModel):
     """One Listing. Every text field is scraped, untrusted text: render it as plain text.
     ``url`` is the source page ("Apply"); show ``source_label`` ("via LinkedIn") and the
-    not-affiliated notice with it."""
+    not-affiliated notice with it. A job you added yourself has ``source`` ``manual`` ("Added
+    by you") and may have no ``url`` (then there is no Apply link)."""
 
     id: uuid.UUID
     title: str
@@ -32,7 +33,7 @@ class ListingOut(BaseModel):
     job_type: JobType | None
     posted_at: datetime | None
     deadline: date | None
-    url: str
+    url: str | None
     source: str
     source_label: str
     skills: list[ListingSkill]

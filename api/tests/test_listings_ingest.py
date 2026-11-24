@@ -95,7 +95,9 @@ async def test_listings_has_no_description_or_owner_column(listing_db: ListingDb
         )
     }
     assert "owner_id" not in cols
-    assert not {c for c in cols if "desc" in c}
+    # Only a Student's own manual Listing may keep a description (Story 4.3; a CHECK keeps it
+    # off pool Listings, see test_manual_listings.py).
+    assert {c for c in cols if "desc" in c} == {"private_description"}
 
 
 async def test_description_privacy(

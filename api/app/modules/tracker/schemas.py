@@ -6,12 +6,20 @@ from typing import Literal, Self
 
 from pydantic import BaseModel, Field
 
+from app.modules.listings.service import MAX_MANUAL_DESCRIPTION_CHARS
 from app.modules.tracker.models import ApplicationStatusHistory
 from app.modules.tracker.service import (
     MAX_NOTES,
     ApplicationView,
     TrackerItem,
     UpcomingDeadline,
+)
+from app.ports.source_adapter import (
+    MAX_COMPANY_CHARS,
+    MAX_LOCATION_CHARS,
+    MAX_TITLE_CHARS,
+    MAX_URL_CHARS,
+    JobType,
 )
 
 ApplicationStatus = Literal["saved", "applied", "interview", "offer", "rejected", "withdrawn"]
@@ -23,11 +31,14 @@ class SaveListingIn(BaseModel):
 
 class ApplicationOut(BaseModel):
     """One Application. ``title``, ``company`` and ``url`` are the snapshot taken when the
-    Listing was saved (scraped, untrusted text: render it as plain text). ``deadline`` is the
-    Listing's current deadline while it is available to you, else the snapshot.
-    ``listing_available`` is false once the Listing is gone, expired or no longer visible to
-    you. ``allowed_next`` lists the Statuses it may move to now (empty when none). ``today``
-    is your local date (Preferences time zone): the latest allowed ``applied_on``."""
+    Listing was saved (scraped, untrusted text: render it as plain text); ``url`` is null for
+    a job you added without a link. ``deadline`` is the Listing's current deadline while it is
+    available to you, else the snapshot. ``listing_available`` is false once the Listing is
+    gone, expired or no longer visible to you. ``allowed_next`` lists the Statuses it may move
+    to now (empty when none). ``today`` is your local date (Preferences time zone): the latest
+    allowed ``applied_on``. ``is_manual`` is true for a job you added from another site
+    ("Added by you"); ``description`` is the description you gave it (plain text), null
+    otherwise."""
 
     id: uuid.UUID
     listing_id: uuid.UUID | None
@@ -36,7 +47,7 @@ class ApplicationOut(BaseModel):
     allowed_next: list[ApplicationStatus]
     title: str
     company: str
-    url: str
+    url: str | None
     deadline: date | None
     notes: str | None
     applied_on: date | None
@@ -44,6 +55,8 @@ class ApplicationOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     today: date
+    is_manual: bool
+    description: str | None
 
     @classmethod
     def from_view(cls, view: ApplicationView) -> Self:
@@ -64,7 +77,25 @@ class ApplicationOut(BaseModel):
             created_at=a.created_at,
             updated_at=a.updated_at,
             today=view.today,
+            is_manual=view.manual,
+            description=view.description,
         )
+
+
+class ExternalJobIn(BaseModel):
+    """A job found on another site. Give a ``title`` or a ``url`` (without a title it is
+    "Job at <host>"). ``url`` must be an absolute http(s) link: it is stored so you can open it
+    later and is never visited by the server. ``description`` (at most 4,000 characters) is
+    kept private to you. ``deadline`` is not before 2000-01-01. Text is trimmed."""
+
+    # The exact limits apply after trimming (service); these caps leave room for whitespace.
+    url: str | None = Field(default=None, max_length=MAX_URL_CHARS + 200)
+    title: str | None = Field(default=None, max_length=MAX_TITLE_CHARS + 200)
+    company: str | None = Field(default=None, max_length=MAX_COMPANY_CHARS + 200)
+    location: str | None = Field(default=None, max_length=MAX_LOCATION_CHARS + 200)
+    job_type: JobType | None = None
+    deadline: date | None = None
+    description: str | None = Field(default=None, max_length=MAX_MANUAL_DESCRIPTION_CHARS + 200)
 
 
 class ApplicationUpdate(BaseModel):
@@ -114,7 +145,7 @@ class TrackerItemOut(ApplicationOut):
     """One Tracker row. ``deadline`` is the Listing's current (effective) deadline while it is
     available to you, else the snapshot. ``in_pool`` equals ``listing_available``. ``score``
     is your stored Match Score of the Listing (null when none is stored or the Listing is no
-    longer available)."""
+    longer available). ``description`` is always null here: open the Application for it."""
 
     in_pool: bool
     score: int | None

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useId, useRef, useState } from "react";
 
 import {
@@ -29,7 +29,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { LOGIN_PATH } from "@/lib/auth-paths";
-import { formatDate, listingPath, safeExternalUrl } from "@/lib/listings";
+import { ADDED_BY_YOU, formatDate, listingPath, safeExternalUrl } from "@/lib/listings";
+import { ALREADY_ADDED_NOTICE } from "@/lib/manual-listing";
 import {
   type ApplicationStatus,
   type StatusAction,
@@ -148,6 +149,11 @@ function StatusButton({
  */
 export function ApplicationView({ id }: { id: string }) {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  // `?existing=1`: the Student re-added a link they had added before (shown once: the flag is
+  // read on mount and dropped from the URL, so a refresh does not repeat it).
+  const [alreadyAdded] = useState(() => searchParams.get("existing") === "1");
   // The last load and the id it is for: a load for another id (the id changed) shows as
   // loading, so nothing has to be reset when the id changes.
   const [loaded, setLoaded] = useState<{ id: string; load: Load } | null>(null);
@@ -188,6 +194,11 @@ export function ApplicationView({ id }: { id: string }) {
     setResumes(versions);
     show(next, target);
   }
+
+  useEffect(() => {
+    if (searchParams.get("existing") === "1") router.replace(pathname, { scroll: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only on mount
+  }, []);
 
   useEffect(() => {
     mounted.current = true;
@@ -339,6 +350,11 @@ export function ApplicationView({ id }: { id: string }) {
 
   return (
     <article className="flex flex-col gap-6" data-testid="application">
+      {alreadyAdded ? (
+        <p role="status" className="rounded-md border p-3 text-sm" data-testid="already-added">
+          {ALREADY_ADDED_NOTICE}
+        </p>
+      ) : null}
       <header className="flex flex-col gap-2">
         <h1 className="text-2xl font-semibold tracking-tight break-words">
           {application.listing_available && application.listing_id ? (
@@ -351,6 +367,11 @@ export function ApplicationView({ id }: { id: string }) {
         </h1>
         {application.company ? (
           <p className="text-muted-foreground break-words">{application.company}</p>
+        ) : null}
+        {application.is_manual ? (
+          <p className="text-xs text-muted-foreground" data-testid="application-added-by-you">
+            {ADDED_BY_YOU}
+          </p>
         ) : null}
         {deadline ? <p className="text-sm">Apply by {deadline}</p> : null}
         {!application.listing_available ? (
@@ -368,6 +389,19 @@ export function ApplicationView({ id }: { id: string }) {
           </div>
         ) : null}
       </header>
+
+      {application.is_manual && application.description ? (
+        <section className="flex flex-col gap-2">
+          <h2 className="text-sm font-medium">Description</h2>
+          {/* Plain text, whitespace kept: never rendered as HTML. */}
+          <p
+            className="rounded-md border p-3 text-sm break-words whitespace-pre-wrap"
+            data-testid="application-description"
+          >
+            {application.description}
+          </p>
+        </section>
+      ) : null}
 
       <section className="flex flex-col gap-3" aria-labelledby={statusId}>
         <h2 id={statusId} className="text-sm font-medium">

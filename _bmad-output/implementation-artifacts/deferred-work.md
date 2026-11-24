@@ -137,3 +137,7 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-4-2-my-tracker-view.md`
   summary: Add a web component or e2e harness and cover the Tracker filters, the Upcoming deadlines section, and the "Saved · Open" card wiring (feed, search, browse), including lookup failures.
   evidence: Web tests cover only `src/lib` helpers; the card lookup and filter wiring can regress silently.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-4-3-add-a-job-from-another-site.md`
+  summary: Cap or rate-limit manual job adds per Student (Story 4.4), store a canonical manual URL with a partial unique index (owner, url) for DB-enforced de-duplication, and add a concurrent-add test and a 0020 downgrade test seeded with NULL-URL rows.
+  evidence: Each add runs ingest and a priority recompute with no limit; de-duplication relies on an advisory lock and a Python scan.

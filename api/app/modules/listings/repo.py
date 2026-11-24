@@ -29,6 +29,7 @@ from sqlalchemy.sql.elements import quoted_name
 from sqlalchemy.sql.functions import Function
 
 from app.modules.listings.models import Listing, ProviderRun, Source
+from app.ports.source_adapter import MANUAL_SOURCE
 
 
 async def get_source(session: AsyncSession, source_id: str) -> Source | None:
@@ -140,7 +141,7 @@ async def upsert_listing(
     *,
     source: str,
     source_job_id: str,
-    url: str,
+    url: str | None,
     title: str,
     company: str,
     location: str,
@@ -373,6 +374,62 @@ async def visible_deadlines(
     return {listing_id: deadline for listing_id, deadline in (await session.execute(stmt)).all()}
 
 
+@dataclass(frozen=True)
+class ListingFacts:
+    """What the Tracker shows of a Listing visible to its owner: whether it is still
+    ``available`` (not expired), its deadline, whether it is the owner's own manual Listing,
+    and (when asked for) that Listing's private description."""
+
+    deadline: date | None
+    manual: bool
+    description: str | None
+    available: bool = True
+
+
+def _manual_for(owner_id: uuid.UUID):  # noqa: ANN202 (SQL expression)
+    # NULL-safe: a pool row (visibility_owner_id NULL) is never "manual for this owner".
+    return (Listing.source == MANUAL_SOURCE) & func.coalesce(
+        Listing.visibility_owner_id == owner_id, false()
+    )
+
+
+async def visible_facts(
+    session: AsyncSession,
+    actor_id: uuid.UUID,
+    listing_ids: list[uuid.UUID],
+    *,
+    with_description: bool,
+) -> dict[uuid.UUID, ListingFacts]:
+    """``{listing_id: ListingFacts}`` of the Listings of ``listing_ids`` visible to
+    ``actor_id``, in one query: those not expired, plus the actor's own manual Listings even
+    when expired (``available`` False), so "Added by you" and the description survive expiry.
+    Others are left out. The description is read only with ``with_description`` and only for
+    the actor's own manual Listings."""
+    if not listing_ids:
+        return {}
+    manual = _manual_for(actor_id)
+    description: Any = (
+        case((manual, Listing.private_description), else_=None)
+        if with_description
+        else literal_column("NULL", type_=Text)
+    )
+    stmt = select(
+        Listing.id,
+        Listing.deadline,
+        manual.label("manual"),
+        description.label("description"),
+        Listing.expired_at.is_(None).label("available"),
+    ).where(
+        Listing.id.in_(listing_ids),
+        _visible_to(actor_id),
+        or_(Listing.expired_at.is_(None), manual),
+    )
+    return {
+        row[0]: ListingFacts(row[1], bool(row[2]), row[3] if row[2] else None, bool(row[4]))
+        for row in (await session.execute(stmt)).all()
+    }
+
+
 async def get_visible_scoring_input(
     session: AsyncSession, actor_id: uuid.UUID, listing_id: uuid.UUID
 ) -> tuple[str, list[str], str, list[str]] | None:
@@ -411,9 +468,6 @@ async def get_visible_scoring_inputs(
     ]
 
 
-MANUAL_SOURCE = "manual"
-
-
 async def candidate_scoring_inputs(
     session: AsyncSession,
     owner_id: uuid.UUID,
@@ -440,10 +494,7 @@ async def candidate_scoring_inputs(
 
     plus every Listing private to the Student (``source='manual'``), never capped."""
     visible = (_visible_to(owner_id), Listing.expired_at.is_(None))
-    # NULL-safe: a pool row (visibility_owner_id NULL) is never "manual for this owner".
-    manual = (Listing.source == MANUAL_SOURCE) & func.coalesce(
-        Listing.visibility_owner_id == owner_id, false()
-    )
+    manual = _manual_for(owner_id)
 
     filters: list[Any] = [*visible, ~manual]
     if role_phrases is not None and not role_phrases:
@@ -832,10 +883,11 @@ async def lock_blocks(
 
 
 async def is_blocked(
-    session: AsyncSession, *, source: str, source_job_id: str, url: str, company: str
+    session: AsyncSession, *, source: str, source_job_id: str, url: str | None, company: str
 ) -> bool:
     """Whether a block matches the draft: by Listing, by canonical URL or by company (all
-    already normalised by the caller)."""
+    already normalised by the caller; ``url`` None, a manual draft without one, matches no
+    URL block)."""
     row = await session.execute(
         text(
             """
@@ -893,11 +945,19 @@ async def listing_ids_by_source_job(
 
 
 async def listing_ids_and_urls(session: AsyncSession) -> list[tuple[uuid.UUID, str]]:
-    return [(r.id, r.url) for r in (await session.execute(select(Listing.id, Listing.url))).all()]
+    """``(id, url)`` of every Listing with a URL that a URL takedown may delete: never a
+    Student's private manual Listing (Story 4.3)."""
+    stmt = select(Listing.id, Listing.url).where(
+        Listing.url.is_not(None), Listing.source != MANUAL_SOURCE
+    )
+    return [(r.id, r.url) for r in (await session.execute(stmt)).all()]
 
 
 async def listing_ids_and_companies(session: AsyncSession) -> list[tuple[uuid.UUID, str]]:
-    stmt = select(Listing.id, Listing.company).where(Listing.company != "")
+    # Never a Student's private manual Listing (Story 4.3).
+    stmt = select(Listing.id, Listing.company).where(
+        Listing.company != "", Listing.source != MANUAL_SOURCE
+    )
     return [(r.id, r.company) for r in (await session.execute(stmt)).all()]
 
 
@@ -910,3 +970,51 @@ async def delete_listings(session: AsyncSession, ids: list[uuid.UUID]) -> int:
         {"ids": ids},
     )
     return len(result.all())
+
+
+# --------------------------------------------------------------------------- manual Listings (4.3)
+
+
+async def lock_manual_adds(session: AsyncSession, owner_id: uuid.UUID) -> None:
+    """Serialise one Student's manual adds until the transaction ends (so two adds of the
+    same URL at once cannot both create a Listing)."""
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtextextended(:k, 0))"),
+        {"k": f"manual_listing:{owner_id}"},
+    )
+
+
+async def manual_urls(session: AsyncSession, owner_id: uuid.UUID) -> list[tuple[uuid.UUID, str]]:
+    """``(id, url)`` of the owner's own manual Listings that have a URL, oldest first."""
+    stmt = (
+        select(Listing.id, Listing.url)
+        .where(_manual_for(owner_id), Listing.url.is_not(None))
+        .order_by(Listing.first_seen_at, Listing.id)
+    )
+    return [(r.id, r.url) for r in (await session.execute(stmt)).all()]
+
+
+async def set_private_description(
+    session: AsyncSession, owner_id: uuid.UUID, listing_id: uuid.UUID, description: str | None
+) -> None:
+    """Store the description of the owner's own manual Listing (a bind parameter only)."""
+    await session.execute(
+        update(Listing)
+        .where(Listing.id == listing_id, _manual_for(owner_id))
+        .values(private_description=description)
+    )
+
+
+async def delete_manual(
+    session: AsyncSession, owner_id: uuid.UUID, listing_id: uuid.UUID
+) -> bool:
+    """Delete the Listing when it is the owner's own manual Listing; False otherwise (a pool
+    Listing or another Student's is never deleted here)."""
+    result = await session.execute(
+        text(
+            "DELETE FROM listings WHERE id = :id AND source = :manual "
+            "AND visibility_owner_id = :owner RETURNING id"
+        ),
+        {"id": listing_id, "manual": MANUAL_SOURCE, "owner": owner_id},
+    )
+    return result.first() is not None

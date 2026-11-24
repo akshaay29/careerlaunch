@@ -71,6 +71,10 @@ class ApplicationView:
     # The effective deadline while the Listing is available (``listings.service``), else the
     # snapshot deadline (AD-7).
     deadline: date | None
+    # The Listing is the Student's own manual Listing (Story 4.3), and its private
+    # description (only on single-Application responses; None in Tracker list rows).
+    manual: bool = False
+    description: str | None = None
 
 
 async def _owned(
@@ -95,36 +99,66 @@ async def allowed_next(session: AsyncSession, application: Application) -> tuple
     return TRANSITIONS.get(application.status, ())
 
 
-async def _available_deadlines(
-    session: AsyncSession, owner_id: uuid.UUID, applications: Iterable[Application]
-) -> dict[uuid.UUID, date | None]:
-    """``{listing_id: effective deadline}`` of the Listings of ``applications`` still
-    available to the owner (exist, visible to them, not expired), in one query (none when no
-    Application references a Listing). An absent Listing is not available."""
+Available = dict[uuid.UUID, listings_service.ListingFacts]
+
+
+async def _available(
+    session: AsyncSession,
+    owner_id: uuid.UUID,
+    applications: Iterable[Application],
+    *,
+    with_description: bool = False,
+) -> Available:
+    """``{listing_id: ListingFacts}`` (available or not, effective deadline, manual or not,
+    and with ``with_description`` a manual Listing's description) of the Listings of
+    ``applications`` visible to the owner, in one query (none when no Application references
+    a Listing). A Listing is available when present with ``available`` True (not expired); the
+    owner's own manual Listings are present even when expired."""
     listing_ids = {a.listing_id for a in applications if a.listing_id is not None}
     if not listing_ids:
         return {}
-    return await listings_service.effective_deadlines(session, owner_id, listing_ids)
+    return await listings_service.tracker_facts(
+        session, owner_id, listing_ids, with_description=with_description
+    )
 
 
-def _deadline(application: Application, available: dict[uuid.UUID, date | None]) -> date | None:
+def _deadline(application: Application, available: Available) -> date | None:
     """The Listing's effective deadline while it is available and has one, else the snapshot
     deadline (AD-7): a Listing that lost its deadline never hides the snapshot's."""
     if application.listing_id is not None:
-        effective = available.get(application.listing_id)
-        if effective is not None:
-            return effective
+        facts = available.get(application.listing_id)
+        if facts is not None and facts.available and facts.deadline is not None:
+            return facts.deadline
     return application.deadline
 
 
-async def _view(session: AsyncSession, application: Application) -> ApplicationView:
-    available = await _available_deadlines(session, application.owner_id, [application])
+def _make_view(
+    application: Application,
+    allowed: tuple[str, ...],
+    available: Available,
+    today: date,
+) -> ApplicationView:
+    facts = available.get(application.listing_id) if application.listing_id else None
     return ApplicationView(
         application,
-        await allowed_next(session, application),
-        application.listing_id is not None and application.listing_id in available,
-        await _today(session, application.owner_id),
+        allowed,
+        facts is not None and facts.available,
+        today,
         _deadline(application, available),
+        manual=facts is not None and facts.manual,
+        description=facts.description if facts is not None and facts.manual else None,
+    )
+
+
+async def _view(session: AsyncSession, application: Application) -> ApplicationView:
+    available = await _available(
+        session, application.owner_id, [application], with_description=True
+    )
+    return _make_view(
+        application,
+        await allowed_next(session, application),
+        available,
+        await _today(session, application.owner_id),
     )
 
 
@@ -289,8 +323,9 @@ async def delete_application(
     session: AsyncSession, owner_id: uuid.UUID, application_id: uuid.UUID
 ) -> None:
     """Delete an Application (its history cascades) and release its pin on the Listing when
-    the Listing still exists. An Application that was not already closed publishes
-    ``ApplicationClosed`` first, in the same transaction."""
+    the Listing still exists. When that Listing is the Student's own manual Listing it is
+    deleted too (its scores cascade). An Application that was not already closed publishes
+    ``ApplicationClosed`` first, all in the same transaction."""
     application = await _owned(session, owner_id, application_id, lock=True)
     if application.status not in CLOSED:
         await publish(
@@ -307,6 +342,9 @@ async def delete_application(
     (listing_id,) = deleted
     if listing_id is not None:
         await _unpin_existing(session, [listing_id])
+        # The Student's own manual Listing exists only for this Application (Story 4.3): it
+        # goes too, with its scores. A pool Listing is never deleted here.
+        await listings_service.delete_manual_listing(session, owner_id, listing_id)
 
 
 async def _unpin_existing(session: AsyncSession, listing_ids: list[uuid.UUID]) -> None:
@@ -484,15 +522,18 @@ async def list_applications(
     page = rows[:limit]
     total = await repo.count(session, owner_id, filters)
     allowed = await _allowed_next_many(session, owner_id, page)
-    available = await _available_deadlines(session, owner_id, page)
+    available = await _available(session, owner_id, page)
+    in_pool_ids = [lid for lid, facts in available.items() if facts.available]
     scores = (
-        await matching_service.stored_scores(session, owner_id, available) if available else {}
+        await matching_service.stored_scores(session, owner_id, in_pool_ids)
+        if in_pool_ids
+        else {}
     )
     today = clock.local_day(timezone)
     items = []
     for a in page:
-        in_pool = a.listing_id is not None and a.listing_id in available
-        view = ApplicationView(a, allowed[a.id], in_pool, today, _deadline(a, available))
+        view = _make_view(a, allowed[a.id], available, today)
+        in_pool = view.listing_available
         score = scores.get(a.listing_id) if in_pool and a.listing_id is not None else None
         items.append(TrackerItem(view, score))
     next_cursor = encode_cursor(page[-1]) if len(rows) > limit else None
@@ -519,12 +560,13 @@ async def upcoming_deadlines(
         last=last,
         limit=MAX_DEADLINE_CANDIDATES,
     )
-    available = await _available_deadlines(session, owner_id, applications)
+    available = await _available(session, owner_id, applications)
     upcoming = []
     for a in applications:
         deadline = _deadline(a, available)
         if deadline is not None and today <= deadline <= last:
-            in_pool = a.listing_id is not None and a.listing_id in available
+            facts = available.get(a.listing_id) if a.listing_id is not None else None
+            in_pool = facts is not None and facts.available
             upcoming.append(UpcomingDeadline(a, deadline, (deadline - today).days, in_pool))
     upcoming.sort(key=lambda u: (u.deadline, u.application.title.casefold(), u.application.id))
     return upcoming[:MAX_UPCOMING]
@@ -542,3 +584,56 @@ async def applications_for_listings(
         )
     found = await repo.ids_for_listings(session, owner_id, ids)
     return [(lid, found[lid]) for lid in ids if lid in found]
+
+
+# --------------------------------------------------------------------------- manual jobs (4.3)
+
+MANUAL_STALE_REASON = "manual_listing"
+
+
+async def add_external_job(
+    session: AsyncSession,
+    owner_id: uuid.UUID,
+    *,
+    url: str | None,
+    title: str | None,
+    company: str | None,
+    location: str | None,
+    job_type: Literal["internship", "full_time"] | None,
+    deadline: date | None,
+    description: str | None,
+) -> tuple[ApplicationView, bool]:
+    """A job found on another site (FR-18): a manual Listing private to the Student
+    (``listings.service.create_manual_listing``, which validates and never fetches the link),
+    saved as an Application in Saved (:func:`save_listing`: snapshot and pin), and the
+    Student's scores marked stale on the priority queue so it gets a Match Score. Returns
+    ``(view, created)``. A link the Student already added returns that Application unchanged
+    (``created`` False, even when its Listing expired) and marks nothing; a link whose manual
+    Listing has no Application gets a new Listing. In the caller's transaction; never
+    commits."""
+    fields: dict[str, Any] = {
+        "url": url,
+        "title": title,
+        "company": company,
+        "location": location,
+        "job_type": job_type,
+        "deadline": deadline,
+        "description": description,
+    }
+    listing_id, reused = await listings_service.create_manual_listing(
+        session, owner_id, **fields
+    )
+    if reused:
+        # The link was added before: its Application as it is (even if the Listing expired).
+        existing = await repo.get_by_listing(session, owner_id, listing_id)
+        if existing is not None:
+            return await _view(session, existing), False
+        listing_id, _ = await listings_service.create_manual_listing(
+            session, owner_id, **fields, reuse_existing=False
+        )
+    view, created = await save_listing(session, owner_id, listing_id)
+    if created:
+        await matching_service.mark_stale(
+            session, owner_ids=[owner_id], reason=MANUAL_STALE_REASON, priority=True
+        )
+    return view, created

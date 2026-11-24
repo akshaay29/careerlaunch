@@ -8,11 +8,12 @@ import uuid
 from datetime import date
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import Actor, current_actor
 from app.core.db import get_session
+from app.core.jobs import drain_priority_after_response
 from app.modules.tracker import service
 from app.modules.tracker.schemas import (
     ApplicationForListing,
@@ -20,6 +21,7 @@ from app.modules.tracker.schemas import (
     ApplicationOut,
     ApplicationStatus,
     ApplicationUpdate,
+    ExternalJobIn,
     SavedListing,
     SavedListings,
     SaveListingIn,
@@ -39,6 +41,10 @@ CurrentActor = Annotated[Actor, Depends(current_actor)]
 _PROBLEM = {"content": {"application/problem+json": {}}}
 _UNAUTHORIZED = {401: {"description": "Not signed in", **_PROBLEM}}
 _NOT_FOUND = {404: {"description": "No such Application for this Student", **_PROBLEM}}
+
+# The shared after-response priority drain (``core.jobs``); a module global so tests can
+# replace it.
+drain_priority = drain_priority_after_response
 
 
 @router.post(
@@ -60,6 +66,56 @@ async def save_listing(
     view, created = await service.save_listing(session, actor.id, body.listing_id)
     await session.commit()
     if not created:
+        response.status_code = 200
+    return ApplicationOut.from_view(view)
+
+
+# Declared before `/applications/{application_id}` routes (a POST there is not one, but keep
+# the literal paths first).
+@router.post(
+    "/applications/manual",
+    response_model=ApplicationOut,
+    status_code=201,
+    operation_id="addExternalJob",
+    responses={
+        200: {
+            "description": "You already added this link: the existing Application",
+            "model": ApplicationOut,
+        },
+        **_UNAUTHORIZED,
+        422: {
+            "description": "No title and no link, an invalid link, text over its limit, a "
+            "deadline before 2000-01-01, or a job that can't be added",
+            **_PROBLEM,
+        },
+    },
+)
+async def add_external_job(
+    body: ExternalJobIn,
+    actor: CurrentActor,
+    session: Session,
+    response: Response,
+    background: BackgroundTasks,
+) -> ApplicationOut:
+    """Add a job you found on another site and track it (201): it is visible only to you,
+    scored like any other Listing and saved as an Application in Saved. The link is stored so
+    you can open it later; it is never visited. Adding the same link again returns that
+    Application unchanged (200)."""
+    view, created = await service.add_external_job(
+        session,
+        actor.id,
+        url=body.url,
+        title=body.title,
+        company=body.company,
+        location=body.location,
+        job_type=body.job_type,
+        deadline=body.deadline,
+        description=body.description,
+    )
+    await session.commit()
+    if created:
+        background.add_task(drain_priority)
+    else:
         response.status_code = 200
     return ApplicationOut.from_view(view)
 
