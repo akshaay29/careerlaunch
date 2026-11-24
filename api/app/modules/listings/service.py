@@ -464,6 +464,35 @@ async def get_listing(
     return BrowseItem(row[0], row[1])
 
 
+@dataclass(frozen=True)
+class ScoringInput:
+    """What the Match Score needs from one Listing (Story 3.1): never the description, which
+    pool Listings do not keep. ``lexemes`` are the ``search_doc`` lexemes (English stems)."""
+
+    title: str
+    skills: tuple[str, ...]
+    vocab_version: str
+    lexemes: tuple[str, ...]
+
+
+async def get_scoring_input(
+    session: AsyncSession, actor_id: uuid.UUID, listing_id: uuid.UUID
+) -> ScoringInput:
+    """The scoring input of one visible, unexpired Listing, with the same visibility as
+    :func:`get_listing`: anything else raises :class:`NotFoundError` (AD-5)."""
+    row = await repo.get_visible_scoring_input(session, actor_id, listing_id)
+    if row is None:
+        raise NotFoundError(NOT_FOUND_DETAIL)
+    title, skills, vocab_version, lexemes = row
+    # Array elements may be NULL; drop them (and empty strings) so the scorer never sees one.
+    return ScoringInput(
+        title or "",
+        tuple(sorted({s for s in skills if s})),
+        vocab_version,
+        tuple(sorted({lx for lx in lexemes if lx})),
+    )
+
+
 # --------------------------------------------------------------------------- provider runs (AD-12)
 #
 # ``start_provider_run``, ``poll_provider_run`` and ``reap_stale_runs`` open their own short

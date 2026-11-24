@@ -2,7 +2,7 @@
 
 import { type Client, type ClientMeta, formDataBodySerializer, type Options as Options2, type RequestResult, type TDataShape } from './client';
 import { client } from './client.gen';
-import type { ActivateResumeData, ActivateResumeErrors, ActivateResumeResponses, DeleteDocumentData, DeleteDocumentErrors, DeleteDocumentResponses, DeleteMeData, DeleteMeErrors, DeleteMeResponses, DeleteProviderKeyData, DeleteProviderKeyResponses, DeleteResumeData, DeleteResumeErrors, DeleteResumeResponses, EditSkillProfileData, EditSkillProfileErrors, EditSkillProfileResponses, GetAdminMeData, GetAdminMeResponses, GetDocumentDownloadData, GetDocumentDownloadErrors, GetDocumentDownloadResponses, GetHealthData, GetHealthResponses, GetListingData, GetListingErrors, GetListingResponses, GetMeData, GetMeResponses, GetPreferencesData, GetPreferencesResponses, GetProviderKeyData, GetProviderKeyResponses, GetProviderUsageData, GetProviderUsageResponses, GetResumeDownloadData, GetResumeDownloadErrors, GetResumeDownloadResponses, GetSkillProfileData, GetSkillProfileResponses, GetSpendCapsData, GetSpendCapsResponses, GrantConsentData, GrantConsentErrors, GrantConsentResponses, ListConsentsData, ListConsentsResponses, ListDegreesData, ListDegreesResponses, ListDocumentsData, ListDocumentsErrors, ListDocumentsResponses, ListListingsData, ListListingsErrors, ListListingsResponses, ListResumesData, ListResumesErrors, ListResumesResponses, PutProviderKeyData, PutProviderKeyErrors, PutProviderKeyResponses, PutSpendCapsData, PutSpendCapsErrors, PutSpendCapsResponses, ResetSkillProfileData, ResetSkillProfileResponses, RevokeConsentData, RevokeConsentErrors, RevokeConsentResponses, SavePreferencesData, SavePreferencesErrors, SavePreferencesResponses, SearchListingsData, SearchListingsErrors, SearchListingsResponses, SuggestSkillsData, SuggestSkillsErrors, SuggestSkillsResponses, UploadDocumentData, UploadDocumentErrors, UploadDocumentResponses, UploadResumeData, UploadResumeErrors, UploadResumeResponses } from './types.gen';
+import type { ActivateResumeData, ActivateResumeErrors, ActivateResumeResponses, DeleteDocumentData, DeleteDocumentErrors, DeleteDocumentResponses, DeleteMeData, DeleteMeErrors, DeleteMeResponses, DeleteProviderKeyData, DeleteProviderKeyResponses, DeleteResumeData, DeleteResumeErrors, DeleteResumeResponses, EditSkillProfileData, EditSkillProfileErrors, EditSkillProfileResponses, GetAdminMeData, GetAdminMeResponses, GetDocumentDownloadData, GetDocumentDownloadErrors, GetDocumentDownloadResponses, GetHealthData, GetHealthResponses, GetListingData, GetListingErrors, GetListingMatchData, GetListingMatchErrors, GetListingMatchResponses, GetListingResponses, GetMeData, GetMeResponses, GetPreferencesData, GetPreferencesResponses, GetProviderKeyData, GetProviderKeyResponses, GetProviderUsageData, GetProviderUsageResponses, GetResumeDownloadData, GetResumeDownloadErrors, GetResumeDownloadResponses, GetSkillProfileData, GetSkillProfileResponses, GetSpendCapsData, GetSpendCapsResponses, GrantConsentData, GrantConsentErrors, GrantConsentResponses, ListConsentsData, ListConsentsResponses, ListDegreesData, ListDegreesResponses, ListDocumentsData, ListDocumentsErrors, ListDocumentsResponses, ListListingsData, ListListingsErrors, ListListingsResponses, ListResumesData, ListResumesErrors, ListResumesResponses, PutProviderKeyData, PutProviderKeyErrors, PutProviderKeyResponses, PutSpendCapsData, PutSpendCapsErrors, PutSpendCapsResponses, ResetSkillProfileData, ResetSkillProfileResponses, RevokeConsentData, RevokeConsentErrors, RevokeConsentResponses, SavePreferencesData, SavePreferencesErrors, SavePreferencesResponses, SearchListingsData, SearchListingsErrors, SearchListingsResponses, SuggestSkillsData, SuggestSkillsErrors, SuggestSkillsResponses, UploadDocumentData, UploadDocumentErrors, UploadDocumentResponses, UploadResumeData, UploadResumeErrors, UploadResumeResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -383,5 +383,18 @@ export const getListing = <ThrowOnError extends boolean = false>(options: Option
 export const getProviderUsage = <ThrowOnError extends boolean = false>(options?: Options<GetProviderUsageData, ThrowOnError>): RequestResult<GetProviderUsageResponses, unknown, ThrowOnError> => (options?.client ?? client).get<GetProviderUsageResponses, unknown, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/api/v1/provider-usage',
+    ...options
+});
+
+/**
+ * Get Listing Match
+ *
+ * The Match Score (0-100) of one Listing you can see, with its breakdown: matched and
+ * missing skills and each component's points out of its maximum. Computed now; not
+ * stored.
+ */
+export const getListingMatch = <ThrowOnError extends boolean = false>(options: Options<GetListingMatchData, ThrowOnError>): RequestResult<GetListingMatchResponses, GetListingMatchErrors, ThrowOnError> => (options.client ?? client).get<GetListingMatchResponses, GetListingMatchErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/v1/listings/{listing_id}/match',
     ...options
 });

@@ -344,6 +344,23 @@ async def get_visible(
     return (row[0], row[1]) if row is not None else None
 
 
+async def get_visible_scoring_input(
+    session: AsyncSession, actor_id: uuid.UUID, listing_id: uuid.UUID
+) -> tuple[str, list[str], str, list[str]] | None:
+    """``(title, skills, vocab_version, search_doc lexemes)`` of one Listing visible to
+    ``actor_id`` and not expired; None otherwise."""
+    stmt = select(
+        Listing.title,
+        Listing.skills,
+        Listing.vocab_version,
+        func.tsvector_to_array(Listing.search_doc),
+    ).where(Listing.id == listing_id, _visible_to(actor_id), Listing.expired_at.is_(None))
+    row = (await session.execute(stmt)).one_or_none()
+    if row is None:
+        return None
+    return row[0], list(row[1] or []), row[2], list(row[3] or [])
+
+
 # --------------------------------------------------------------------------- provider runs
 
 

@@ -47,17 +47,17 @@ development_status:
   1-9-delete-my-account-and-all-my-data: done
   epic-1-retrospective: optional
 
-  epic-2: in-progress
+  epic-2: done
   2-1-shared-listing-pool-source-adapter-and-browsing: done
   2-2-add-my-apify-provider-key: done
   2-3-collect-linkedin-listings-on-a-schedule: done
   2-4-see-my-usage-set-spend-caps-and-pause-on-failure: done
   2-5-expire-evict-and-take-down-listings: done
-  2-6-search-listings-by-keyword: in-progress
+  2-6-search-listings-by-keyword: done
   epic-2-retrospective: optional
 
-  epic-3: backlog
-  3-1-deterministic-match-score-with-a-breakdown: backlog
+  epic-3: in-progress
+  3-1-deterministic-match-score-with-a-breakdown: in-progress
   3-2-keep-my-scores-fresh: backlog
   3-3-my-ranked-feed: backlog
   3-4-see-why-a-listing-scored-what-it-did: backlog

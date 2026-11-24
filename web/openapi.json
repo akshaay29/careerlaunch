@@ -1381,6 +1381,61 @@
           }
         ]
       }
+    },
+    "/api/v1/listings/{listing_id}/match": {
+      "get": {
+        "tags": [
+          "matching"
+        ],
+        "summary": "Get Listing Match",
+        "description": "The Match Score (0-100) of one Listing you can see, with its breakdown: matched and\nmissing skills and each component's points out of its maximum. Computed now; not\nstored.",
+        "operationId": "getListingMatch",
+        "security": [
+          {
+            "SupabaseAccessToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "listing_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Listing Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListingMatch"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such Listing for this Student",
+            "content": {
+              "application/problem+json": {}
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1713,6 +1768,32 @@
         "title": "ListingList",
         "description": "Newest first. Pass ``next_cursor`` as ``cursor`` to get the next page (null = done)."
       },
+      "ListingMatch": {
+        "properties": {
+          "listing_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Listing Id"
+          },
+          "score": {
+            "type": "integer",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Score"
+          },
+          "breakdown": {
+            "$ref": "#/components/schemas/ScoreBreakdown"
+          }
+        },
+        "type": "object",
+        "required": [
+          "listing_id",
+          "score",
+          "breakdown"
+        ],
+        "title": "ListingMatch",
+        "description": "The Match Score (0-100) of one Listing for the signed-in Student, computed on request."
+      },
       "ListingOut": {
         "properties": {
           "id": {
@@ -1861,6 +1942,25 @@
         ],
         "title": "ListingSkill",
         "description": "A canonical skill extracted from the Listing."
+      },
+      "MatchSkill": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "label"
+        ],
+        "title": "MatchSkill",
+        "description": "A canonical skill in a breakdown."
       },
       "Me": {
         "properties": {
@@ -2580,6 +2680,86 @@
         ],
         "title": "RightsNotice",
         "description": "The India DPDP Act rights notice, shown with the consent texts (plain text)."
+      },
+      "ScoreBreakdown": {
+        "properties": {
+          "algo_version": {
+            "type": "integer",
+            "title": "Algo Version"
+          },
+          "weights_version": {
+            "type": "integer",
+            "title": "Weights Version"
+          },
+          "vocab_version": {
+            "type": "string",
+            "title": "Vocab Version"
+          },
+          "matched_skills": {
+            "items": {
+              "$ref": "#/components/schemas/MatchSkill"
+            },
+            "type": "array",
+            "title": "Matched Skills"
+          },
+          "missing_skills": {
+            "items": {
+              "$ref": "#/components/schemas/MatchSkill"
+            },
+            "type": "array",
+            "title": "Missing Skills"
+          },
+          "components": {
+            "items": {
+              "$ref": "#/components/schemas/ScoreComponent"
+            },
+            "type": "array",
+            "title": "Components"
+          }
+        },
+        "type": "object",
+        "required": [
+          "algo_version",
+          "weights_version",
+          "vocab_version",
+          "matched_skills",
+          "missing_skills",
+          "components"
+        ],
+        "title": "ScoreBreakdown",
+        "description": "Why a Listing scored what it did. The components' ``points`` sum to the score. Skills\nare sorted by label: ``matched_skills`` are the Listing's skills the Student has,\n``missing_skills`` the ones they do not."
+      },
+      "ScoreComponent": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "enum": [
+              "skills",
+              "text"
+            ],
+            "title": "Name"
+          },
+          "points": {
+            "type": "integer",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Points"
+          },
+          "max_points": {
+            "type": "integer",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Max Points"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "points",
+          "max_points"
+        ],
+        "title": "ScoreComponent",
+        "description": "One part of the score: ``points`` out of ``max_points``. ``skills`` is the canonical\nskill overlap; ``text`` is the similarity of the Student's target roles and skills to the\nListing's title and text. A Listing without skills gives ``skills`` a ``max_points`` of 0."
       },
       "SkillProfileEdit": {
         "properties": {
