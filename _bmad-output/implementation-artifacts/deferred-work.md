@@ -117,3 +117,7 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-3-2-keep-my-scores-fresh.md`
   summary: Story 3.3's feed must hide expired or taken-down Listings even when stored scores still reference them.
   evidence: Expiry and takedown do not trigger a recompute; stored scores are pruned only on the Student's next recompute.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-3-my-ranked-feed.md`
+  summary: Cap manual Listings in the provisional feed, share one visibility/expiry predicate and one default threshold across modules, type `FeedItem.from_listing`, and extend the feed perf test (stale rows, larger score sets, HTTP timing).
+  evidence: `candidate_set` adds every manual Listing beyond the cap; predicates and the threshold default are repeated in `matching`, `listings` and `profile`.

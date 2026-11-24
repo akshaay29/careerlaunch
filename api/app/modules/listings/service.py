@@ -464,6 +464,15 @@ async def get_listing(
     return BrowseItem(row[0], row[1])
 
 
+async def visible_items(
+    session: AsyncSession, actor_id: uuid.UUID, listing_ids: Iterable[uuid.UUID]
+) -> list[BrowseItem]:
+    """The given Listings that are visible to ``actor_id`` and not expired (others are
+    silently left out), with their Source labels, in no particular order. One query."""
+    rows = await repo.get_visible_many(session, actor_id, sorted(set(listing_ids)))
+    return [BrowseItem(listing, label) for listing, label in rows]
+
+
 @dataclass(frozen=True)
 class ScoringInput:
     """What the Match Score needs from one Listing (Story 3.1): never the description, which

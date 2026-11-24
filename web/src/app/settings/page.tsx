@@ -3,7 +3,7 @@ import Link from "next/link";
 
 import { SignOutButton } from "@/components/auth/sign-out-button";
 import { SETTINGS_ACCOUNT_PATH } from "@/lib/account-deletion";
-import { LISTINGS_PATH, ONBOARDING_PATH } from "@/lib/auth-paths";
+import { FEED_PATH, LISTINGS_PATH, ONBOARDING_PATH } from "@/lib/auth-paths";
 import { SETTINGS_CONSENT_PATH } from "@/lib/consent";
 import { SETTINGS_DOCUMENTS_PATH } from "@/lib/documents";
 import { SETTINGS_PREFERENCES_PATH } from "@/lib/preferences";
@@ -14,6 +14,11 @@ import { SETTINGS_SKILLS_PATH } from "@/lib/skill-profile";
 export const metadata: Metadata = { title: "Settings · CareerLaunch" };
 
 const PAGES = [
+  {
+    href: FEED_PATH,
+    title: "My feed",
+    description: "Listings ranked by how well they match your skills and Preferences.",
+  },
   {
     href: LISTINGS_PATH,
     title: "Listings",

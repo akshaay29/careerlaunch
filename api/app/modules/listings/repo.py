@@ -344,6 +344,22 @@ async def get_visible(
     return (row[0], row[1]) if row is not None else None
 
 
+async def get_visible_many(
+    session: AsyncSession, actor_id: uuid.UUID, listing_ids: list[uuid.UUID]
+) -> list[tuple[Listing, str]]:
+    """The Listings of ``listing_ids`` visible to ``actor_id`` and not expired, each with its
+    Source label, in no particular order (one query)."""
+    if not listing_ids:
+        return []
+    stmt = (
+        select(Listing, Source.label)
+        .join(Source, Source.id == Listing.source)
+        .where(Listing.id.in_(listing_ids), _visible_to(actor_id), Listing.expired_at.is_(None))
+        .execution_options(populate_existing=True)
+    )
+    return [(listing, label) for listing, label in (await session.execute(stmt)).all()]
+
+
 async def get_visible_scoring_input(
     session: AsyncSession, actor_id: uuid.UUID, listing_id: uuid.UUID
 ) -> tuple[str, list[str], str, list[str]] | None:

@@ -97,3 +97,6 @@ services:
       # Stored Match Scores (Story 3.2).
       - key: MATCH_CANDIDATE_CAP
         value: "500"
+      # The ranked feed (Story 3.3).
+      - key: FEED_ON_REQUEST_CAP
+        value: "60"

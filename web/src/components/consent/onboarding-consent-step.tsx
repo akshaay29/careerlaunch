@@ -7,7 +7,7 @@ import { PreferencesEditor } from "@/components/preferences/preferences-editor";
 import { ResumeManager } from "@/components/resumes/resume-manager";
 import { SkillProfileEditor } from "@/components/skills/skill-profile-editor";
 import { Button } from "@/components/ui/button";
-import { LISTINGS_PATH, SETTINGS_PATH } from "@/lib/auth-paths";
+import { FEED_PATH, LISTINGS_PATH, SETTINGS_PATH } from "@/lib/auth-paths";
 import { SETTINGS_CONSENT_PATH } from "@/lib/consent";
 import { SETTINGS_PREFERENCES_PATH } from "@/lib/preferences";
 import { SETTINGS_RESUMES_PATH } from "@/lib/resumes";
@@ -32,14 +32,18 @@ export function OnboardingConsentStep() {
         <div className="flex flex-col gap-1">
           <h2 className="text-lg font-medium">You&apos;re set up</h2>
           <p className="text-sm text-muted-foreground">
-            Your Resume, skills and Preferences are saved. Your job feed will appear here once
-            matching is available.
+            Your Resume, skills and Preferences are saved.
           </p>
         </div>
         <section className="flex flex-col gap-2 rounded-lg border p-5 text-sm">
-          <p>Browse jobs and internships from the shared pool while your feed is on its way.</p>
-          <div>
+          <p>See Listings ranked by how well they match your skills and Preferences.</p>
+          <div className="flex flex-wrap gap-2">
             <Button asChild>
+              <Link href={FEED_PATH} data-testid="onboarding-open-feed">
+                Open my feed
+              </Link>
+            </Button>
+            <Button asChild variant="outline">
               <Link href={LISTINGS_PATH} data-testid="onboarding-browse-listings">
                 Browse Listings
               </Link>

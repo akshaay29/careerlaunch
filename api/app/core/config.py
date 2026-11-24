@@ -118,6 +118,9 @@ class Settings(BaseSettings):
     # and stored (newest first); their own manual Listings are added beyond the cap (a Student
     # with no Preferences filter and no skill has no candidates at all).
     match_candidate_cap: int = Field(default=500, ge=1, le=5000)
+    # The ranked feed (Story 3.3): before a Student has stored scores, at most this many of their
+    # candidates are scored on request (never stored) so the first feed is ranked at once.
+    feed_on_request_cap: int = Field(default=60, ge=1, le=500)
     # The owner's Apify token, used ONLY by scripts/seed_pool.py.
     seed_apify_token: SecretStr | None = None
 

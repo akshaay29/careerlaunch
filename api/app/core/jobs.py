@@ -279,6 +279,22 @@ async def enqueue(
     return outbox_id
 
 
+_JOB_PENDING = text(
+    """
+    SELECT EXISTS (SELECT 1 FROM job_outbox WHERE key = :key)
+        OR EXISTS (
+            SELECT 1 FROM procrastinate_jobs WHERE queueing_lock = :key AND status = 'todo'
+        )
+    """
+)
+
+
+async def job_pending(session: AsyncSession, key: str) -> bool:
+    """Whether a job with ``key`` is waiting: still in the outbox, or deferred and not yet
+    started (the state in which its queueing lock drops a duplicate)."""
+    return bool((await session.execute(_JOB_PENDING, {"key": key})).scalar())
+
+
 # --------------------------------------------------------------------------- drain steps
 
 
