@@ -103,3 +103,7 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-2-6-search-listings-by-keyword.md`
   summary: Tell the Student when results stop at the offset cap, treat combining marks as part of words, share tokenizer test vectors between the API and web, and add rate limiting for search.
   evidence: `next_offset` becomes null at 200 with no message; `str.isalnum` and `[\p{L}\p{N}]` split Indic words; the two tokenizers are mirrored by hand; no endpoint is rate limited yet.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-1-deterministic-match-score-with-a-breakdown.md`
+  summary: Rebalance the text component so a broad profile is not penalised (coverage over role-title terms, or capped term count) and matched skills are not counted again in text; speed up lexeme matching for batch scoring (set lookup first).
+  evidence: `lexeme_coverage` divides by all the Student's terms including every skill label; Story 3.2 will score many Listings per Student.

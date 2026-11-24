@@ -224,6 +224,23 @@ export type ListingList = {
 };
 
 /**
+ * ListingMatch
+ *
+ * The Match Score (0-100) of one Listing for the signed-in Student, computed on request.
+ */
+export type ListingMatch = {
+    /**
+     * Listing Id
+     */
+    listing_id: string;
+    /**
+     * Score
+     */
+    score: number;
+    breakdown: ScoreBreakdown;
+};
+
+/**
  * ListingOut
  *
  * One Listing. Every text field is scraped, untrusted text: render it as plain text.
@@ -304,6 +321,22 @@ export type ListingSearchResults = {
  * A canonical skill extracted from the Listing.
  */
 export type ListingSkill = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Label
+     */
+    label: string;
+};
+
+/**
+ * MatchSkill
+ *
+ * A canonical skill in a breakdown.
+ */
+export type MatchSkill = {
     /**
      * Id
      */
@@ -706,6 +739,62 @@ export type RightsNotice = {
      * Body
      */
     body: Array<string>;
+};
+
+/**
+ * ScoreBreakdown
+ *
+ * Why a Listing scored what it did. The components' ``points`` sum to the score. Skills
+ * are sorted by label: ``matched_skills`` are the Listing's skills the Student has,
+ * ``missing_skills`` the ones they do not.
+ */
+export type ScoreBreakdown = {
+    /**
+     * Algo Version
+     */
+    algo_version: number;
+    /**
+     * Weights Version
+     */
+    weights_version: number;
+    /**
+     * Vocab Version
+     */
+    vocab_version: string;
+    /**
+     * Matched Skills
+     */
+    matched_skills: Array<MatchSkill>;
+    /**
+     * Missing Skills
+     */
+    missing_skills: Array<MatchSkill>;
+    /**
+     * Components
+     */
+    components: Array<ScoreComponent>;
+};
+
+/**
+ * ScoreComponent
+ *
+ * One part of the score: ``points`` out of ``max_points``. ``skills`` is the canonical
+ * skill overlap; ``text`` is the similarity of the Student's target roles and skills to the
+ * Listing's title and text. A Listing without skills gives ``skills`` a ``max_points`` of 0.
+ */
+export type ScoreComponent = {
+    /**
+     * Name
+     */
+    name: 'skills' | 'text';
+    /**
+     * Points
+     */
+    points: number;
+    /**
+     * Max Points
+     */
+    max_points: number;
 };
 
 /**
@@ -1681,3 +1770,37 @@ export type GetProviderUsageResponses = {
 };
 
 export type GetProviderUsageResponse = GetProviderUsageResponses[keyof GetProviderUsageResponses];
+
+export type GetListingMatchData = {
+    body?: never;
+    path: {
+        /**
+         * Listing Id
+         */
+        listing_id: string;
+    };
+    query?: never;
+    url: '/api/v1/listings/{listing_id}/match';
+};
+
+export type GetListingMatchErrors = {
+    /**
+     * No such Listing for this Student
+     */
+    404: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type GetListingMatchError = GetListingMatchErrors[keyof GetListingMatchErrors];
+
+export type GetListingMatchResponses = {
+    /**
+     * Successful Response
+     */
+    200: ListingMatch;
+};
+
+export type GetListingMatchResponse = GetListingMatchResponses[keyof GetListingMatchResponses];
