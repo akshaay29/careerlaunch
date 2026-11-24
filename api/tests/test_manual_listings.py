@@ -2,10 +2,12 @@
 scored like any other (Story 4.3). One test (or more) per row of the I/O matrix."""
 
 import logging
+import os
 import socket
 import urllib.request
 import uuid
 from collections.abc import Iterator
+from urllib.parse import urlsplit
 
 import httpx
 import psycopg
@@ -481,8 +483,11 @@ async def test_an_expired_manual_listing_still_shows_as_added_by_you(
 def no_network(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[str]]:
     """Record (and refuse) any outbound connection: sockets, DNS, httpx and urllib. The
     database driver (libpq) does not use Python sockets, and the test client talks to the
-    app in-process (ASGITransport)."""
+    app in-process (ASGITransport). psycopg resolves the database host itself with
+    ``getaddrinfo`` (``localhost`` in CI), so lookups of that one host are allowed."""
     attempts: list[str] = []
+    db_host = urlsplit(os.environ.get("DATABASE_URL", "")).hostname
+    real_getaddrinfo = socket.getaddrinfo
 
     def refuse(what: str):  # noqa: ANN202
         def _refused(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
@@ -491,10 +496,17 @@ def no_network(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[str]]:
 
         return _refused
 
+    refused_lookup = refuse("socket.getaddrinfo")
+
+    def getaddrinfo(host, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003, ANN202
+        if db_host is not None and host == db_host:
+            return real_getaddrinfo(host, *args, **kwargs)
+        return refused_lookup(host, *args, **kwargs)
+
     monkeypatch.setattr(socket.socket, "connect", refuse("socket.connect"))
     monkeypatch.setattr(socket.socket, "connect_ex", refuse("socket.connect_ex"))
     monkeypatch.setattr(socket, "create_connection", refuse("socket.create_connection"))
-    monkeypatch.setattr(socket, "getaddrinfo", refuse("socket.getaddrinfo"))
+    monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
     monkeypatch.setattr(
         httpx.AsyncHTTPTransport, "handle_async_request", refuse("httpx.AsyncHTTPTransport")
     )
