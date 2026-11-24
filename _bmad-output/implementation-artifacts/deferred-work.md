@@ -107,3 +107,13 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-3-1-deterministic-match-score-with-a-breakdown.md`
   summary: Rebalance the text component so a broad profile is not penalised (coverage over role-title terms, or capped term count) and matched skills are not counted again in text; speed up lexeme matching for batch scoring (set lookup first).
   evidence: `lexeme_coverage` divides by all the Student's terms including every skill label; Story 3.2 will score many Listings per Student.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-2-keep-my-scores-fresh.md`
+  summary: Re-mark every Student stale when `ALGO_VERSION`, the weights version or `VOCAB_VERSION` changes (deploy-time check or task).
+  evidence: Stored rows record their versions but nothing triggers a recompute when they change.
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-2-keep-my-scores-fresh.md`
+  summary: Reduce recompute cost at scale: mark only Students whose filters match the ingested Listings, batch outbox inserts, skip unchanged score rows, use the `<%` operator so the trigram index serves the role filter, and count changed rows in the ops event.
+  evidence: Each pool ingest marks almost every Student and each recompute rewrites up to 500 rows and scans the visible pool.
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-2-keep-my-scores-fresh.md`
+  summary: Story 3.3's feed must hide expired or taken-down Listings even when stored scores still reference them.
+  evidence: Expiry and takedown do not trigger a recompute; stored scores are pruned only on the Student's next recompute.

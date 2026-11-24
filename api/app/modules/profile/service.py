@@ -603,6 +603,13 @@ async def get_preferences(session: AsyncSession, owner_id: uuid.UUID) -> Prefere
     return await repo.get_preferences(session, owner_id)
 
 
+async def owner_ids_with_matching_setup(session: AsyncSession) -> list[uuid.UUID]:
+    """Every owner whose Preferences set a filter (role titles, locations or job types) or
+    whose Skill Profile has an effective skill: the Students matching marks stale when new
+    Listings arrive (Story 3.2)."""
+    return await repo.owner_ids_with_matching_setup(session)
+
+
 async def save_preferences(
     session: AsyncSession, owner_id: uuid.UUID, values: dict[str, Any]
 ) -> tuple[Preferences, bool]:

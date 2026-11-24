@@ -31,6 +31,7 @@ from app.modules.accounts.router import router as accounts_router
 from app.modules.accounts.service import get_or_provision
 from app.modules.listings import events as listings_events
 from app.modules.listings.router import router as listings_router
+from app.modules.matching import events as matching_events
 from app.modules.matching.router import router as matching_router
 from app.modules.profile import events as profile_events
 from app.modules.profile.files import MAX_FILE_BYTES
@@ -215,6 +216,7 @@ def create_app(
     accounts_events.register()
     profile_events.register()
     listings_events.register()
+    matching_events.register()
 
     # Admin and public first: routes match in mount order, so a token-only route such as
     # /{id}/... can never shadow /api/v1/admin/* or /api/v1/public/*.

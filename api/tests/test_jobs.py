@@ -12,8 +12,10 @@ from app.core.config import to_libpq_url
 from app.core.db import get_sessionmaker
 from app.core.jobs import (
     DRAIN_LOCK_KEY,
+    PRIORITY_DRAIN_MAX_ROUNDS,
     RetryPolicy,
     drain,
+    drain_priority_after_response,
     enqueue,
     flush_outbox,
     retry_stalled,
@@ -36,6 +38,15 @@ async def record_run(*, item_id: uuid.UUID, n: int = 0) -> None:
 @task("tests.record_priority", queue="priority")
 async def record_priority(*, item_id: uuid.UUID) -> None:
     RUNS.append(("record_priority", {"item_id": item_id}))
+
+
+@task("tests.chain_priority", queue="priority")
+async def chain_priority(*, item_id: uuid.UUID, n: int = 0) -> None:
+    """Re-enqueues itself (a new key per step) until ``n`` reaches 0."""
+    RUNS.append(("chain_priority", {"item_id": item_id, "n": n}))
+    if n > 0:
+        key = _key("tests.chain_priority", item_id, str(n - 1))
+        await _enqueue_and_commit(chain_priority, key, item_id=item_id, n=n - 1)
 
 
 @task("tests.flaky", retry=RetryPolicy(max_attempts=3, exponential_wait=0))
@@ -315,6 +326,28 @@ async def test_drain_queue_subset_only_runs_those_queues() -> None:
     await _enqueue_and_commit(record_priority, _key("tests.record_priority", b), item_id=b)
     await drain(queues=("priority",))
     assert [name for name, _ in RUNS] == ["record_priority"]
+
+
+async def test_priority_drain_after_response_runs_follow_up_jobs() -> None:
+    """A priority job that enqueues a follow-up after the outbox was flushed still runs in
+    the same after-response drain: up to PRIORITY_DRAIN_MAX_ROUNDS rounds."""
+    item = uuid.uuid4()
+    await _enqueue_and_commit(
+        chain_priority, _key("tests.chain_priority", item, "start"), item_id=item, n=5
+    )
+    await drain_priority_after_response()
+    assert PRIORITY_DRAIN_MAX_ROUNDS == 3
+    assert [r["n"] for _, r in RUNS] == [5, 4, 3]
+    # The rest waits in the outbox for the next drain.
+    assert await _scalar("SELECT count(*) FROM job_outbox WHERE queue = 'priority'") == 1
+
+
+async def test_priority_drain_after_response_stops_when_nothing_follows() -> None:
+    item = uuid.uuid4()
+    await _enqueue_and_commit(record_priority, _key("tests.record_priority", item), item_id=item)
+    await drain_priority_after_response()
+    assert [name for name, _ in RUNS] == ["record_priority"]
+    assert await _scalar("SELECT count(*) FROM ops_events WHERE kind = 'drain.completed'") == 1
 
 
 async def test_failures_are_retried_per_policy() -> None:

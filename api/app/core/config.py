@@ -114,6 +114,10 @@ class Settings(BaseSettings):
     # Keyword search (Story 2.6): the least trigram word similarity (title + company) that still
     # counts as a match when full-text search finds nothing, so a typo still matches.
     search_trigram_threshold: float = Field(default=0.35, ge=0.1, le=0.9)
+    # Stored Match Scores (Story 3.2): at most this many pool Listings per Student are scored
+    # and stored (newest first); their own manual Listings are added beyond the cap (a Student
+    # with no Preferences filter and no skill has no candidates at all).
+    match_candidate_cap: int = Field(default=500, ge=1, le=5000)
     # The owner's Apify token, used ONLY by scripts/seed_pool.py.
     seed_apify_token: SecretStr | None = None
 

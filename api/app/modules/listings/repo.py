@@ -361,6 +361,133 @@ async def get_visible_scoring_input(
     return row[0], list(row[1] or []), row[2], list(row[3] or [])
 
 
+MANUAL_SOURCE = "manual"
+
+
+async def candidate_scoring_inputs(
+    session: AsyncSession,
+    owner_id: uuid.UUID,
+    *,
+    role_tsquery: str | None,
+    role_phrases: list[str] | None,
+    locations: list[str],
+    job_types: list[str],
+    threshold: float,
+    cap: int,
+) -> list[tuple[uuid.UUID, str, list[str], str, list[str]]]:
+    """``(id, title, skills, vocab_version, search_doc lexemes)`` of a Student's candidate
+    set (Story 3.2), in one query. Only Listings visible to ``owner_id`` and not expired.
+
+    The ``cap`` newest (``first_seen_at``) Listings that pass every non-empty filter:
+
+    * role: the title matches ``role_tsquery`` (a prefix tsquery restricted to the title's
+      weight, built from sanitised tokens only), or ``word_similarity`` of one of
+      ``role_phrases`` to the lower-cased title reaches ``threshold``. ``role_phrases`` None:
+      no role filter; empty (role titles with no word in them): nothing matches.
+    * location: the location contains one of ``locations``, ignoring case, or is unknown
+      (empty);
+    * job type: ``job_type`` is one of ``job_types``, or NULL;
+
+    plus every Listing private to the Student (``source='manual'``), never capped."""
+    visible = (_visible_to(owner_id), Listing.expired_at.is_(None))
+    # NULL-safe: a pool row (visibility_owner_id NULL) is never "manual for this owner".
+    manual = (Listing.source == MANUAL_SOURCE) & func.coalesce(
+        Listing.visibility_owner_id == owner_id, false()
+    )
+
+    filters: list[Any] = [*visible, ~manual]
+    if role_phrases is not None and not role_phrases:
+        filters.append(false())
+    elif role_phrases:
+        schema = await _trgm_schema(session)
+        title = func.lower(Listing.title)
+        role_matches: list[Any] = [
+            Function(
+                quoted_name(f"{_quote_ident(schema)}.word_similarity", False),
+                bindparam(f"role_{i}", phrase, type_=Text),
+                title,
+                type_=Float,
+            )
+            >= bindparam("threshold", float(threshold), type_=Float)
+            for i, phrase in enumerate(role_phrases)
+        ]
+        if role_tsquery:
+            tsq = func.to_tsquery(
+                literal_column("'english'::regconfig"),
+                bindparam("role_tsq", role_tsquery, type_=Text),
+            )
+            role_matches.append(Listing.search_doc.op("@@")(tsq))
+        filters.append(or_(*role_matches))
+    if locations:
+        place = func.lower(func.coalesce(Listing.location, ""))
+        filters.append(
+            or_(
+                place == "",
+                *(
+                    func.strpos(place, func.lower(bindparam(f"loc_{i}", loc, type_=Text))) > 0
+                    for i, loc in enumerate(locations)
+                )
+            )
+        )
+    if job_types:
+        filters.append(
+            or_(Listing.job_type.is_(None), Listing.job_type.in_(list(job_types)))
+        )
+
+    pool = (
+        select(Listing.id.label("id"))
+        .where(*filters)
+        .order_by(Listing.first_seen_at.desc(), Listing.id.desc())
+        .limit(cap)
+        .subquery("pool")
+    )
+    own = select(Listing.id.label("id")).where(*visible, manual)
+    ids = union_all(select(pool.c.id), own).subquery("cand")
+    stmt = (
+        select(
+            Listing.id,
+            Listing.title,
+            Listing.skills,
+            Listing.vocab_version,
+            func.tsvector_to_array(Listing.search_doc),
+        )
+        .join(ids, ids.c.id == Listing.id)
+        .order_by(Listing.id)
+    )
+    return [
+        (row[0], row[1] or "", list(row[2] or []), row[3], list(row[4] or []))
+        for row in (await session.execute(stmt)).all()
+    ]
+
+
+async def lock_existing(
+    session: AsyncSession, listing_ids: list[uuid.UUID], *, for_update: bool
+) -> list[uuid.UUID]:
+    """Lock the rows of ``listing_ids`` that still exist, in id order, until the transaction
+    ends; returns their ids. ``for_update`` takes ``FOR NO KEY UPDATE`` (row writers such as
+    relevance), else ``FOR KEY SHARE`` (keeps them from being deleted while rows referencing
+    them are written)."""
+    if not listing_ids:
+        return []
+    stmt = select(Listing.id).where(Listing.id.in_(listing_ids)).order_by(Listing.id)
+    stmt = stmt.with_for_update(key_share=True) if for_update else stmt.with_for_update(
+        read=True, key_share=True
+    )
+    return list((await session.execute(stmt)).scalars())
+
+
+async def has_pool_listing(session: AsyncSession, listing_ids: list[uuid.UUID]) -> bool:
+    """Whether one of ``listing_ids`` is in the shared pool (not private to a Student)."""
+    if not listing_ids:
+        return False
+    stmt = select(
+        select(Listing.id)
+        .where(Listing.id.in_(listing_ids), Listing.visibility_owner_id.is_(None))
+        .exists()
+    )
+    return bool((await session.execute(stmt)).scalar())
+
+
 # --------------------------------------------------------------------------- provider runs
 
 
@@ -606,10 +733,12 @@ async def database_size_bytes(session: AsyncSession) -> int:
 
 async def lock_listing(session: AsyncSession, listing_id: uuid.UUID) -> Listing | None:
     """The Listing, row-locked until the transaction ends (None when it does not exist)."""
+    # FOR NO KEY UPDATE: only non-key columns change, so this never waits on (or deadlocks
+    # with) a ``FOR KEY SHARE`` held by a score writer (matching.recompute).
     stmt = (
         select(Listing)
         .where(Listing.id == listing_id)
-        .with_for_update()
+        .with_for_update(key_share=True)
         .execution_options(populate_existing=True)
     )
     return (await session.execute(stmt)).scalar_one_or_none()

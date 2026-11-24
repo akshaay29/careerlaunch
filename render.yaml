@@ -94,3 +94,6 @@ services:
       # Keyword search (Story 2.6).
       - key: SEARCH_TRIGRAM_THRESHOLD
         value: "0.35"
+      # Stored Match Scores (Story 3.2).
+      - key: MATCH_CANDIDATE_CAP
+        value: "500"
