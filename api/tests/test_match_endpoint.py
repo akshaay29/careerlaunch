@@ -16,6 +16,7 @@ from app.ports.source_adapter import SourceQuery
 from tests.conftest import AccountFactory, TokenFactory
 from tests.fakes.source_adapter import FakeSourceAdapter
 from tests.listing_fixtures import ListingDb, draft, listing_db  # noqa: F401 (fixture)
+from tests.match_fixtures import mark
 
 LISTINGS = "/api/v1/listings"
 PROBLEM = "application/problem+json"
@@ -85,7 +86,7 @@ def _match(item: dict) -> tuple[int, dict]:
     return item["score"], item["breakdown"]
 
 
-@pytest.mark.parametrize("path", [f"{LISTINGS}/{uuid.uuid4()}/match"])
+@pytest.mark.parametrize("path", [f"{LISTINGS}/{uuid.UUID(int=7)}/match"])
 async def test_no_token_is_401(client: AsyncClient, path: str) -> None:
     resp = await client.get(path)
     assert resp.status_code == 401
@@ -117,8 +118,9 @@ async def test_scores_a_visible_listing_with_breakdown(
     resp = await client.get(f"{LISTINGS}/{listing_id}/match", headers=headers)
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert set(body) == {"listing_id", "score", "breakdown"}
+    assert set(body) == {"listing_id", "score", "breakdown", "source"}
     assert body["listing_id"] == str(listing_id)
+    assert body["source"] == "on_request"
     value, breakdown = _match(body)
     assert 0 <= value <= 100
     assert sum(c["points"] for c in breakdown["components"]) == value
@@ -327,3 +329,147 @@ async def test_scoring_profile_drops_null_and_blank_values(
     assert profile.skills == frozenset({"python"})
     assert profile.role_titles == ("Backend Intern",)
     assert profile.vocab_version == "2026.11.1"
+
+
+# --------------------------------------------------------------------------- Story 3.4: stored
+
+
+_STORED_BREAKDOWN = (
+    '{"algo_version": 1, "weights_version": 1, "vocab_version": "test", '
+    '"matched_skills": [{"id": "python", "label": "Python"}], '
+    '"missing_skills": [{"id": "docker", "label": "Docker"}], '
+    '"components": [{"name": "skills", "points": 30, "max_points": 70}, '
+    '{"name": "text", "points": 12, "max_points": 30}]}'
+)
+
+
+def _store(
+    db: ListingDb, owner_id: uuid.UUID, listing_id: uuid.UUID, value: int, raw: str
+) -> None:
+    db.execute(
+        "INSERT INTO app.match_scores (owner_id, listing_id, score, breakdown, algo_version, "
+        "weights_version, vocab_version, computed_at) "
+        "VALUES (%s, %s, %s, CAST(%s AS jsonb), 1, 1, 'test', now())",
+        (owner_id, listing_id, value, raw),
+    )
+
+
+def _stored_count(db: ListingDb, owner_id: uuid.UUID) -> int:
+    return db.execute("SELECT count(*) FROM app.match_scores WHERE owner_id = %s", (owner_id,))[
+        0
+    ][0]
+
+
+async def test_stored_score_and_breakdown_are_returned(
+    client: AsyncClient, engine: AsyncEngine, student: Student, listing_db: ListingDb
+) -> None:
+    owner_id, headers = student
+    await _collect(engine, [draft(1)])
+    listing_id = _id_of(listing_db, "job-1")
+    _store(listing_db, owner_id, listing_id, 42, _STORED_BREAKDOWN)
+
+    resp = await client.get(f"{LISTINGS}/{listing_id}/match", headers=headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["source"] == "stored"
+    assert body["score"] == 42
+    assert body["breakdown"]["vocab_version"] == "test"
+    assert body["breakdown"]["matched_skills"] == [{"id": "python", "label": "Python"}]
+    assert body["breakdown"]["components"] == [
+        {"name": "skills", "points": 30, "max_points": 70},
+        {"name": "text", "points": 12, "max_points": 30},
+    ]
+
+
+async def test_on_request_score_is_never_stored(
+    client: AsyncClient, engine: AsyncEngine, student: Student, listing_db: ListingDb
+) -> None:
+    owner_id, headers = student
+    await _collect(engine, [draft(1)])
+    listing_id = _id_of(listing_db, "job-1")
+    _set_roles(listing_db, owner_id, ["Backend Intern"])
+    resp = await client.get(f"{LISTINGS}/{listing_id}/match", headers=headers)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["source"] == "on_request"
+    assert _stored_count(listing_db, owner_id) == 0
+
+
+async def test_stored_score_of_an_expired_listing_is_404(
+    client: AsyncClient, engine: AsyncEngine, student: Student, listing_db: ListingDb
+) -> None:
+    owner_id, headers = student
+    await _collect(engine, [draft(1)])
+    listing_id = _id_of(listing_db, "job-1")
+    _store(listing_db, owner_id, listing_id, 42, _STORED_BREAKDOWN)
+    listing_db.execute("UPDATE app.listings SET expired_at = now() WHERE id = %s", (listing_id,))
+    resp = await client.get(f"{LISTINGS}/{listing_id}/match", headers=headers)
+    assert resp.status_code == 404
+    assert resp.headers["content-type"].startswith(PROBLEM)
+
+
+async def test_stored_score_of_a_listing_now_private_to_another_is_404(
+    client: AsyncClient,
+    engine: AsyncEngine,
+    student: Student,
+    other_student: Student,
+    listing_db: ListingDb,
+) -> None:
+    owner_id, headers = student
+    other_id, _ = other_student
+    await _collect(engine, [draft(1)])
+    listing_id = _id_of(listing_db, "job-1")
+    _store(listing_db, owner_id, listing_id, 42, _STORED_BREAKDOWN)
+    listing_db.execute(
+        "UPDATE app.listings SET visibility_owner_id = %s WHERE id = %s", (other_id, listing_id)
+    )
+    resp = await client.get(f"{LISTINGS}/{listing_id}/match", headers=headers)
+    assert resp.status_code == 404
+
+
+async def test_invalid_stored_breakdown_falls_back_to_on_request(
+    client: AsyncClient, engine: AsyncEngine, student: Student, listing_db: ListingDb
+) -> None:
+    owner_id, headers = student
+    await _collect(engine, [draft(1)])
+    listing_id = _id_of(listing_db, "job-1")
+    _store(listing_db, owner_id, listing_id, 42, "{}")
+    resp = await client.get(f"{LISTINGS}/{listing_id}/match", headers=headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["source"] == "on_request"
+    assert sum(c["points"] for c in body["breakdown"]["components"]) == body["score"]
+
+
+async def test_mismatched_stored_breakdown_falls_back_to_on_request(
+    client: AsyncClient, engine: AsyncEngine, student: Student, listing_db: ListingDb
+) -> None:
+    owner_id, headers = student
+    await _collect(engine, [draft(1)])
+    listing_id = _id_of(listing_db, "job-1")
+    _store(listing_db, owner_id, listing_id, 50, _STORED_BREAKDOWN)  # its points sum to 42
+    resp = await client.get(f"{LISTINGS}/{listing_id}/match", headers=headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["source"] == "on_request"
+    assert sum(c["points"] for c in body["breakdown"]["components"]) == body["score"]
+
+
+async def test_recomputed_score_is_served_as_stored(
+    client: AsyncClient, engine: AsyncEngine, student: Student, listing_db: ListingDb
+) -> None:
+    owner_id, headers = student
+    await _collect(engine, [draft(1, title="Backend Engineering Intern")])
+    listing_id = _id_of(listing_db, "job-1")
+    _set_profile(listing_db, owner_id, extracted=["python"])
+    _set_roles(listing_db, owner_id, ["Backend Engineer"])
+    on_request = (await client.get(f"{LISTINGS}/{listing_id}/match", headers=headers)).json()
+    assert on_request["source"] == "on_request"
+
+    await mark(engine, owner_id)
+    await matching_service.recompute_for_owner(owner_id, priority=True)
+    assert _stored_count(listing_db, owner_id) == 1
+    stored = (await client.get(f"{LISTINGS}/{listing_id}/match", headers=headers)).json()
+    assert stored["source"] == "stored"
+    # The same scorer: the stored breakdown equals the one computed on request.
+    assert stored["score"] == on_request["score"]
+    assert stored["breakdown"] == on_request["breakdown"]

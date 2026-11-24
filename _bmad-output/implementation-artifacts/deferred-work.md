@@ -121,3 +121,11 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-3-3-my-ranked-feed.md`
   summary: Cap manual Listings in the provisional feed, share one visibility/expiry predicate and one default threshold across modules, type `FeedItem.from_listing`, and extend the feed perf test (stale rows, larger score sets, HTTP timing).
   evidence: `candidate_set` adds every manual Listing beyond the cap; predicates and the threshold default are repeated in `matching`, `listings` and `profile`.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-4-see-why-a-listing-scored-what-it-did.md`
+  summary: Define SM-4's denominator ("active Students"), add a per-Student daily dedupe or rate limit and a retention rule for `matching.breakdown_opened`, and add component or e2e tests for the breakdown view, search badges and detail badge once `web` has a harness.
+  evidence: The event is a plain authenticated POST with no limit; the web wiring is only covered by pure-helper tests.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-4-see-why-a-listing-scored-what-it-did.md`
+  summary: Make `test_listing_search_perf.py` robust on loaded machines (e.g. compare against a calibration query, or run it only in CI with a fixed budget), for Story 4.4.
+  evidence: On the developer's OneDrive-synced laptop the two-word query measured 242 ms, then 399 ms and 623 ms under background load with no change to the search code, so the 500 ms assertion fails intermittently locally.

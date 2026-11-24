@@ -334,7 +334,9 @@ export type ListingList = {
 /**
  * ListingMatch
  *
- * The Match Score (0-100) of one Listing for the signed-in Student, computed on request.
+ * The Match Score (0-100) of one Listing for the signed-in Student, with its breakdown.
+ * ``source``: ``stored`` is the Student's stored score; ``on_request`` was computed just now
+ * with the same scorer and is not stored.
  */
 export type ListingMatch = {
     /**
@@ -346,6 +348,10 @@ export type ListingMatch = {
      */
     score: number;
     breakdown: ScoreBreakdown;
+    /**
+     * Source
+     */
+    source: 'stored' | 'on_request';
 };
 
 /**
@@ -437,6 +443,40 @@ export type ListingSkill = {
      * Label
      */
     label: string;
+};
+
+/**
+ * MatchScoreItem
+ *
+ * The Match Score (0-100) of one Listing, without its breakdown (``source`` as on
+ * ``ListingMatch``).
+ */
+export type MatchScoreItem = {
+    /**
+     * Listing Id
+     */
+    listing_id: string;
+    /**
+     * Score
+     */
+    score: number;
+    /**
+     * Source
+     */
+    source: 'stored' | 'on_request';
+};
+
+/**
+ * MatchScores
+ *
+ * Match Scores of the requested Listings that the Student can see and that have not
+ * expired, in request order. Unknown, expired or hidden Listings are left out.
+ */
+export type MatchScores = {
+    /**
+     * Items
+     */
+    items: Array<MatchScoreItem>;
 };
 
 /**
@@ -1893,6 +1933,10 @@ export type GetListingMatchData = {
 
 export type GetListingMatchErrors = {
     /**
+     * Not signed in
+     */
+    401: unknown;
+    /**
      * No such Listing for this Student
      */
     404: unknown;
@@ -1912,6 +1956,76 @@ export type GetListingMatchResponses = {
 };
 
 export type GetListingMatchResponse = GetListingMatchResponses[keyof GetListingMatchResponses];
+
+export type RecordBreakdownViewedData = {
+    body?: never;
+    path: {
+        /**
+         * Listing Id
+         */
+        listing_id: string;
+    };
+    query?: never;
+    url: '/api/v1/listings/{listing_id}/match/viewed';
+};
+
+export type RecordBreakdownViewedErrors = {
+    /**
+     * Not signed in
+     */
+    401: unknown;
+    /**
+     * No such Listing for this Student
+     */
+    404: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type RecordBreakdownViewedError = RecordBreakdownViewedErrors[keyof RecordBreakdownViewedErrors];
+
+export type RecordBreakdownViewedResponses = {
+    /**
+     * Successful Response
+     */
+    204: void;
+};
+
+export type RecordBreakdownViewedResponse = RecordBreakdownViewedResponses[keyof RecordBreakdownViewedResponses];
+
+export type GetMatchScoresData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Ids
+         */
+        ids?: Array<string> | null;
+    };
+    url: '/api/v1/matches';
+};
+
+export type GetMatchScoresErrors = {
+    /**
+     * Not signed in
+     */
+    401: unknown;
+    /**
+     * More than 50 distinct ids, or an id is not a UUID
+     */
+    422: unknown;
+};
+
+export type GetMatchScoresResponses = {
+    /**
+     * Successful Response
+     */
+    200: MatchScores;
+};
+
+export type GetMatchScoresResponse = GetMatchScoresResponses[keyof GetMatchScoresResponses];
 
 export type GetFeedData = {
     body?: never;

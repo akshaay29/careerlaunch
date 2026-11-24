@@ -22,7 +22,8 @@ export function SkillChips({ skills }: { skills: ListingOut["skills"] }) {
 
 /**
  * One Listing in the browse list or the feed. All scraped text is rendered as plain text.
- * `badge` (the feed's score) is shown beside the title.
+ * `badge` (the Match Score with "Why this score", in the feed and search results) is shown
+ * beside the title.
  */
 export function ListingCard({ listing, badge }: { listing: ListingOut; badge?: ReactNode }) {
   const dates = listingDates(listing);

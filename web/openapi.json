@@ -1388,7 +1388,7 @@
           "matching"
         ],
         "summary": "Get Listing Match",
-        "description": "The Match Score (0-100) of one Listing you can see, with its breakdown: matched and\nmissing skills and each component's points out of its maximum. Computed now; not\nstored.",
+        "description": "The Match Score (0-100) of one Listing you can see, with its breakdown: matched and\nmissing skills and each component's points out of its maximum. My stored score when I\nhave one (``stored``); otherwise computed now and not stored (``on_request``).",
         "operationId": "getListingMatch",
         "security": [
           {
@@ -1418,6 +1418,12 @@
               }
             }
           },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/problem+json": {}
+            }
+          },
           "404": {
             "description": "No such Listing for this Student",
             "content": {
@@ -1432,6 +1438,122 @@
                   "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/listings/{listing_id}/match/viewed": {
+      "post": {
+        "tags": [
+          "matching"
+        ],
+        "summary": "Record Breakdown Viewed",
+        "description": "Count that I opened \"Why this score\" for a Listing I can see. Only the count is\nrecorded: no Listing, score or skill.",
+        "operationId": "recordBreakdownViewed",
+        "security": [
+          {
+            "SupabaseAccessToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "listing_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Listing Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/problem+json": {}
+            }
+          },
+          "404": {
+            "description": "No such Listing for this Student",
+            "content": {
+              "application/problem+json": {}
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/matches": {
+      "get": {
+        "tags": [
+          "matching"
+        ],
+        "summary": "Get Match Scores",
+        "description": "My Match Scores (no breakdowns) for up to 50 distinct Listings, e.g. one page of\nsearch results. Duplicates count once (at most 200 values in all); Listings I cannot see, expired or unknown ones are left\nout. Stored scores are used where I have them; the rest are computed now and not\nstored.",
+        "operationId": "getMatchScores",
+        "security": [
+          {
+            "SupabaseAccessToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "maxItems": 200
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ids"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MatchScores"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/problem+json": {}
+            }
+          },
+          "422": {
+            "description": "More than 50 distinct ids, or an id is not a UUID",
+            "content": {
+              "application/problem+json": {}
             }
           }
         }
@@ -2027,16 +2149,25 @@
           },
           "breakdown": {
             "$ref": "#/components/schemas/ScoreBreakdown"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "stored",
+              "on_request"
+            ],
+            "title": "Source"
           }
         },
         "type": "object",
         "required": [
           "listing_id",
           "score",
-          "breakdown"
+          "breakdown",
+          "source"
         ],
         "title": "ListingMatch",
-        "description": "The Match Score (0-100) of one Listing for the signed-in Student, computed on request."
+        "description": "The Match Score (0-100) of one Listing for the signed-in Student, with its breakdown.\n``source``: ``stored`` is the Student's stored score; ``on_request`` was computed just now\nwith the same scorer and is not stored."
       },
       "ListingOut": {
         "properties": {
@@ -2186,6 +2317,54 @@
         ],
         "title": "ListingSkill",
         "description": "A canonical skill extracted from the Listing."
+      },
+      "MatchScoreItem": {
+        "properties": {
+          "listing_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Listing Id"
+          },
+          "score": {
+            "type": "integer",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Score"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "stored",
+              "on_request"
+            ],
+            "title": "Source"
+          }
+        },
+        "type": "object",
+        "required": [
+          "listing_id",
+          "score",
+          "source"
+        ],
+        "title": "MatchScoreItem",
+        "description": "The Match Score (0-100) of one Listing, without its breakdown (``source`` as on\n``ListingMatch``)."
+      },
+      "MatchScores": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MatchScoreItem"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "MatchScores",
+        "description": "Match Scores of the requested Listings that the Student can see and that have not\nexpired, in request order. Unknown, expired or hidden Listings are left out."
       },
       "MatchSkill": {
         "properties": {
