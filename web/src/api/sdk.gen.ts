@@ -2,7 +2,7 @@
 
 import { type Client, type ClientMeta, formDataBodySerializer, type Options as Options2, type RequestResult, type TDataShape } from './client';
 import { client } from './client.gen';
-import type { ActivateResumeData, ActivateResumeErrors, ActivateResumeResponses, DeleteApplicationData, DeleteApplicationErrors, DeleteApplicationResponses, DeleteDocumentData, DeleteDocumentErrors, DeleteDocumentResponses, DeleteMeData, DeleteMeErrors, DeleteMeResponses, DeleteProviderKeyData, DeleteProviderKeyResponses, DeleteResumeData, DeleteResumeErrors, DeleteResumeResponses, EditSkillProfileData, EditSkillProfileErrors, EditSkillProfileResponses, GetAdminMeData, GetAdminMeResponses, GetApplicationData, GetApplicationErrors, GetApplicationForListingData, GetApplicationForListingErrors, GetApplicationForListingResponses, GetApplicationHistoryData, GetApplicationHistoryErrors, GetApplicationHistoryResponses, GetApplicationResponses, GetDocumentDownloadData, GetDocumentDownloadErrors, GetDocumentDownloadResponses, GetFeedData, GetFeedErrors, GetFeedResponses, GetHealthData, GetHealthResponses, GetListingData, GetListingErrors, GetListingMatchData, GetListingMatchErrors, GetListingMatchResponses, GetListingResponses, GetMatchScoresData, GetMatchScoresErrors, GetMatchScoresResponses, GetMeData, GetMeResponses, GetPreferencesData, GetPreferencesResponses, GetProviderKeyData, GetProviderKeyResponses, GetProviderUsageData, GetProviderUsageResponses, GetResumeDownloadData, GetResumeDownloadErrors, GetResumeDownloadResponses, GetSkillProfileData, GetSkillProfileResponses, GetSpendCapsData, GetSpendCapsResponses, GrantConsentData, GrantConsentErrors, GrantConsentResponses, ListConsentsData, ListConsentsResponses, ListDegreesData, ListDegreesResponses, ListDocumentsData, ListDocumentsErrors, ListDocumentsResponses, ListListingsData, ListListingsErrors, ListListingsResponses, ListResumesData, ListResumesErrors, ListResumesResponses, PutProviderKeyData, PutProviderKeyErrors, PutProviderKeyResponses, PutSpendCapsData, PutSpendCapsErrors, PutSpendCapsResponses, RecordBreakdownViewedData, RecordBreakdownViewedErrors, RecordBreakdownViewedResponses, ResetSkillProfileData, ResetSkillProfileResponses, RevokeConsentData, RevokeConsentErrors, RevokeConsentResponses, SaveListingData, SaveListingErrors, SaveListingResponses, SavePreferencesData, SavePreferencesErrors, SavePreferencesResponses, SearchListingsData, SearchListingsErrors, SearchListingsResponses, SuggestSkillsData, SuggestSkillsErrors, SuggestSkillsResponses, TransitionApplicationData, TransitionApplicationErrors, TransitionApplicationResponses, UpdateApplicationData, UpdateApplicationErrors, UpdateApplicationResponses, UploadDocumentData, UploadDocumentErrors, UploadDocumentResponses, UploadResumeData, UploadResumeErrors, UploadResumeResponses } from './types.gen';
+import type { ActivateResumeData, ActivateResumeErrors, ActivateResumeResponses, DeleteApplicationData, DeleteApplicationErrors, DeleteApplicationResponses, DeleteDocumentData, DeleteDocumentErrors, DeleteDocumentResponses, DeleteMeData, DeleteMeErrors, DeleteMeResponses, DeleteProviderKeyData, DeleteProviderKeyResponses, DeleteResumeData, DeleteResumeErrors, DeleteResumeResponses, EditSkillProfileData, EditSkillProfileErrors, EditSkillProfileResponses, GetAdminMeData, GetAdminMeResponses, GetApplicationData, GetApplicationErrors, GetApplicationForListingData, GetApplicationForListingErrors, GetApplicationForListingResponses, GetApplicationHistoryData, GetApplicationHistoryErrors, GetApplicationHistoryResponses, GetApplicationResponses, GetApplicationsForListingsData, GetApplicationsForListingsErrors, GetApplicationsForListingsResponses, GetDocumentDownloadData, GetDocumentDownloadErrors, GetDocumentDownloadResponses, GetFeedData, GetFeedErrors, GetFeedResponses, GetHealthData, GetHealthResponses, GetListingData, GetListingErrors, GetListingMatchData, GetListingMatchErrors, GetListingMatchResponses, GetListingResponses, GetMatchScoresData, GetMatchScoresErrors, GetMatchScoresResponses, GetMeData, GetMeResponses, GetPreferencesData, GetPreferencesResponses, GetProviderKeyData, GetProviderKeyResponses, GetProviderUsageData, GetProviderUsageResponses, GetResumeDownloadData, GetResumeDownloadErrors, GetResumeDownloadResponses, GetSkillProfileData, GetSkillProfileResponses, GetSpendCapsData, GetSpendCapsResponses, GrantConsentData, GrantConsentErrors, GrantConsentResponses, ListApplicationsData, ListApplicationsErrors, ListApplicationsResponses, ListConsentsData, ListConsentsResponses, ListDegreesData, ListDegreesResponses, ListDocumentsData, ListDocumentsErrors, ListDocumentsResponses, ListListingsData, ListListingsErrors, ListListingsResponses, ListResumesData, ListResumesErrors, ListResumesResponses, ListUpcomingDeadlinesData, ListUpcomingDeadlinesErrors, ListUpcomingDeadlinesResponses, PutProviderKeyData, PutProviderKeyErrors, PutProviderKeyResponses, PutSpendCapsData, PutSpendCapsErrors, PutSpendCapsResponses, RecordBreakdownViewedData, RecordBreakdownViewedErrors, RecordBreakdownViewedResponses, ResetSkillProfileData, ResetSkillProfileResponses, RevokeConsentData, RevokeConsentErrors, RevokeConsentResponses, SaveListingData, SaveListingErrors, SaveListingResponses, SavePreferencesData, SavePreferencesErrors, SavePreferencesResponses, SearchListingsData, SearchListingsErrors, SearchListingsResponses, SuggestSkillsData, SuggestSkillsErrors, SuggestSkillsResponses, TransitionApplicationData, TransitionApplicationErrors, TransitionApplicationResponses, UpdateApplicationData, UpdateApplicationErrors, UpdateApplicationResponses, UploadDocumentData, UploadDocumentErrors, UploadDocumentResponses, UploadResumeData, UploadResumeErrors, UploadResumeResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -439,6 +439,21 @@ export const getFeed = <ThrowOnError extends boolean = false>(options?: Options<
 });
 
 /**
+ * List Applications
+ *
+ * Your Applications, most recently saved first. Filters combine: ``status`` (repeat
+ * for any of several), ``company`` (case-insensitive part of the company name), and an
+ * inclusive ``date_from``/``date_to`` range on the save date in your time zone
+ * (``date_by=saved``) or on the applied date (``date_by=applied``; Applications without one
+ * are left out). ``total`` counts every match.
+ */
+export const listApplications = <ThrowOnError extends boolean = false>(options?: Options<ListApplicationsData, ThrowOnError>): RequestResult<ListApplicationsResponses, ListApplicationsErrors, ThrowOnError> => (options?.client ?? client).get<ListApplicationsResponses, ListApplicationsErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/v1/applications',
+    ...options
+});
+
+/**
  * Save Listing
  *
  * Save a Listing you can see as an Application in Status Saved (201). Saving it again
@@ -452,6 +467,31 @@ export const saveListing = <ThrowOnError extends boolean = false>(options: Optio
         'Content-Type': 'application/json',
         ...options.headers
     }
+});
+
+/**
+ * List Upcoming Deadlines
+ *
+ * Your Saved, Applied and Interview Applications whose deadline falls from today to
+ * today + ``days`` (your time zone), soonest first, at most 20.
+ */
+export const listUpcomingDeadlines = <ThrowOnError extends boolean = false>(options?: Options<ListUpcomingDeadlinesData, ThrowOnError>): RequestResult<ListUpcomingDeadlinesResponses, ListUpcomingDeadlinesErrors, ThrowOnError> => (options?.client ?? client).get<ListUpcomingDeadlinesResponses, ListUpcomingDeadlinesErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/v1/applications/deadlines',
+    ...options
+});
+
+/**
+ * Get Applications For Listings
+ *
+ * Which of the given Listings you have saved, with the Application ids. ``ids`` takes at
+ * most 200 raw values and at most 50 distinct ids (duplicates are ignored). Unsaved
+ * Listings are left out.
+ */
+export const getApplicationsForListings = <ThrowOnError extends boolean = false>(options?: Options<GetApplicationsForListingsData, ThrowOnError>): RequestResult<GetApplicationsForListingsResponses, GetApplicationsForListingsErrors, ThrowOnError> => (options?.client ?? client).get<GetApplicationsForListingsResponses, GetApplicationsForListingsErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/v1/applications/by-listings',
+    ...options
 });
 
 /**

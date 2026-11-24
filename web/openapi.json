@@ -1647,15 +1647,20 @@
         "summary": "Save Listing",
         "description": "Save a Listing you can see as an Application in Status Saved (201). Saving it again\nreturns the same Application unchanged (200).",
         "operationId": "saveListing",
+        "security": [
+          {
+            "SupabaseAccessToken": []
+          }
+        ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/SaveListingIn"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "201": {
@@ -1700,12 +1705,283 @@
               }
             }
           }
-        },
+        }
+      },
+      "get": {
+        "tags": [
+          "tracker"
+        ],
+        "summary": "List Applications",
+        "description": "Your Applications, most recently saved first. Filters combine: ``status`` (repeat\nfor any of several), ``company`` (case-insensitive part of the company name), and an\ninclusive ``date_from``/``date_to`` range on the save date in your time zone\n(``date_by=saved``) or on the applied date (``date_by=applied``; Applications without one\nare left out). ``total`` counts every match.",
+        "operationId": "listApplications",
         "security": [
           {
             "SupabaseAccessToken": []
           }
-        ]
+        ],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "enum": [
+                      "saved",
+                      "applied",
+                      "interview",
+                      "offer",
+                      "rejected",
+                      "withdrawn"
+                    ],
+                    "type": "string"
+                  },
+                  "maxItems": 12
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "company",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 100
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Company"
+            }
+          },
+          {
+            "name": "date_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Date From"
+            }
+          },
+          {
+            "name": "date_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Date To"
+            }
+          },
+          {
+            "name": "date_by",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "saved",
+                "applied"
+              ],
+              "type": "string",
+              "default": "saved",
+              "title": "Date By"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 50,
+              "minimum": 1,
+              "default": 20,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 200
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrackerPageOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/problem+json": {}
+            }
+          },
+          "422": {
+            "description": "An unknown Status, a company filter over 100 characters, a start date after the end date, or an invalid cursor or limit",
+            "content": {
+              "application/problem+json": {}
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/applications/deadlines": {
+      "get": {
+        "tags": [
+          "tracker"
+        ],
+        "summary": "List Upcoming Deadlines",
+        "description": "Your Saved, Applied and Interview Applications whose deadline falls from today to\ntoday + ``days`` (your time zone), soonest first, at most 20.",
+        "operationId": "listUpcomingDeadlines",
+        "security": [
+          {
+            "SupabaseAccessToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 180,
+              "minimum": 1,
+              "default": 30,
+              "title": "Days"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpcomingDeadlines"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/problem+json": {}
+            }
+          },
+          "422": {
+            "description": "``days`` is not 1 to 180",
+            "content": {
+              "application/problem+json": {}
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/applications/by-listings": {
+      "get": {
+        "tags": [
+          "tracker"
+        ],
+        "summary": "Get Applications For Listings",
+        "description": "Which of the given Listings you have saved, with the Application ids. ``ids`` takes at\nmost 200 raw values and at most 50 distinct ids (duplicates are ignored). Unsaved\nListings are left out.",
+        "operationId": "getApplicationsForListings",
+        "security": [
+          {
+            "SupabaseAccessToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "maxItems": 200
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ids"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedListings"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/problem+json": {}
+            }
+          },
+          "422": {
+            "description": "More than 200 ids, more than 50 distinct ids, or an id is not a UUID",
+            "content": {
+              "application/problem+json": {}
+            }
+          }
+        }
       }
     },
     "/api/v1/applications/by-listing/{listing_id}": {
@@ -2280,7 +2556,7 @@
           "today"
         ],
         "title": "ApplicationOut",
-        "description": "One Application. ``title``, ``company``, ``url`` and ``deadline`` are the snapshot taken\nwhen the Listing was saved (scraped, untrusted text: render it as plain text).\n``listing_available`` is false once the Listing is gone, expired or no longer visible to\nyou. ``allowed_next`` lists the Statuses it may move to now (empty when none). ``today``\nis your local date (Preferences time zone): the latest allowed ``applied_on``."
+        "description": "One Application. ``title``, ``company`` and ``url`` are the snapshot taken when the\nListing was saved (scraped, untrusted text: render it as plain text). ``deadline`` is the\nListing's current deadline while it is available to you, else the snapshot.\n``listing_available`` is false once the Listing is gone, expired or no longer visible to\nyou. ``allowed_next`` lists the Statuses it may move to now (empty when none). ``today``\nis your local date (Preferences time zone): the latest allowed ``applied_on``."
       },
       "ApplicationUpdate": {
         "properties": {
@@ -3786,6 +4062,43 @@
         ],
         "title": "SaveListingIn"
       },
+      "SavedListing": {
+        "properties": {
+          "listing_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Listing Id"
+          },
+          "application_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Application Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "listing_id",
+          "application_id"
+        ],
+        "title": "SavedListing"
+      },
+      "SavedListings": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SavedListing"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "SavedListings",
+        "description": "Your Applications for the asked Listings; unsaved Listings are left out."
+      },
       "ScoreBreakdown": {
         "properties": {
           "algo_version": {
@@ -4130,6 +4443,203 @@
         "title": "StatusChange",
         "description": "One Status change. ``from_status`` is null for the save."
       },
+      "TrackerItemOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "listing_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Listing Id"
+          },
+          "listing_available": {
+            "type": "boolean",
+            "title": "Listing Available"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "saved",
+              "applied",
+              "interview",
+              "offer",
+              "rejected",
+              "withdrawn"
+            ],
+            "title": "Status"
+          },
+          "allowed_next": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "saved",
+                "applied",
+                "interview",
+                "offer",
+                "rejected",
+                "withdrawn"
+              ]
+            },
+            "type": "array",
+            "title": "Allowed Next"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "company": {
+            "type": "string",
+            "title": "Company"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "deadline": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deadline"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "applied_on": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applied On"
+          },
+          "resume_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resume Id"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "today": {
+            "type": "string",
+            "format": "date",
+            "title": "Today"
+          },
+          "in_pool": {
+            "type": "boolean",
+            "title": "In Pool"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "listing_id",
+          "listing_available",
+          "status",
+          "allowed_next",
+          "title",
+          "company",
+          "url",
+          "deadline",
+          "notes",
+          "applied_on",
+          "resume_id",
+          "created_at",
+          "updated_at",
+          "today",
+          "in_pool",
+          "score"
+        ],
+        "title": "TrackerItemOut",
+        "description": "One Tracker row. ``deadline`` is the Listing's current (effective) deadline while it is\navailable to you, else the snapshot. ``in_pool`` equals ``listing_available``. ``score``\nis your stored Match Score of the Listing (null when none is stored or the Listing is no\nlonger available)."
+      },
+      "TrackerPageOut": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TrackerItemOut"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "next_cursor"
+        ],
+        "title": "TrackerPageOut",
+        "description": "One page of your Applications, most recently saved first. ``total`` counts every\nApplication matching the filters; ``next_cursor`` is set when more follow."
+      },
       "TransitionIn": {
         "properties": {
           "status": {
@@ -4150,6 +4660,77 @@
           "status"
         ],
         "title": "TransitionIn"
+      },
+      "UpcomingDeadlineOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "company": {
+            "type": "string",
+            "title": "Company"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "saved",
+              "applied",
+              "interview",
+              "offer",
+              "rejected",
+              "withdrawn"
+            ],
+            "title": "Status"
+          },
+          "deadline": {
+            "type": "string",
+            "format": "date",
+            "title": "Deadline"
+          },
+          "days_left": {
+            "type": "integer",
+            "title": "Days Left"
+          },
+          "in_pool": {
+            "type": "boolean",
+            "title": "In Pool"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "company",
+          "status",
+          "deadline",
+          "days_left",
+          "in_pool"
+        ],
+        "title": "UpcomingDeadlineOut",
+        "description": "An open Application (Saved, Applied or Interview) with a deadline coming up.\n``days_left`` is 0 for today, in your time zone."
+      },
+      "UpcomingDeadlines": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/UpcomingDeadlineOut"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "title": "UpcomingDeadlines",
+        "description": "Upcoming deadlines, soonest first (then by title), at most 20."
       },
       "ValidationError": {
         "properties": {

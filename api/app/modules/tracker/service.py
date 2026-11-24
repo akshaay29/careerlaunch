@@ -8,10 +8,13 @@ from the auth context, and another Student's Application is a 404 (AD-5).
 ``ApplicationReopened`` in the caller's transaction.
 """
 
+import base64
+import binascii
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import date
-from typing import Any
+from datetime import UTC, date, datetime, time, timedelta
+from typing import Any, Literal
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +23,7 @@ from app.core import clock
 from app.core.errors import InvalidInputError, InvalidTransitionError, NotFoundError
 from app.core.events import AccountDeleting, ApplicationClosed, ApplicationReopened, publish
 from app.modules.listings import service as listings_service
+from app.modules.matching import service as matching_service
 from app.modules.profile import service as profile_service
 from app.modules.tracker import repo
 from app.modules.tracker.models import Application, ApplicationStatusHistory
@@ -64,6 +68,9 @@ class ApplicationView:
     allowed_next: tuple[str, ...]
     listing_available: bool
     today: date
+    # The effective deadline while the Listing is available (``listings.service``), else the
+    # snapshot deadline (AD-7).
+    deadline: date | None
 
 
 async def _owned(
@@ -88,21 +95,36 @@ async def allowed_next(session: AsyncSession, application: Application) -> tuple
     return TRANSITIONS.get(application.status, ())
 
 
-async def _listing_available(session: AsyncSession, application: Application) -> bool:
-    if application.listing_id is None:
-        return False
-    visible = await listings_service.visible_items(
-        session, application.owner_id, [application.listing_id]
-    )
-    return bool(visible)
+async def _available_deadlines(
+    session: AsyncSession, owner_id: uuid.UUID, applications: Iterable[Application]
+) -> dict[uuid.UUID, date | None]:
+    """``{listing_id: effective deadline}`` of the Listings of ``applications`` still
+    available to the owner (exist, visible to them, not expired), in one query (none when no
+    Application references a Listing). An absent Listing is not available."""
+    listing_ids = {a.listing_id for a in applications if a.listing_id is not None}
+    if not listing_ids:
+        return {}
+    return await listings_service.effective_deadlines(session, owner_id, listing_ids)
+
+
+def _deadline(application: Application, available: dict[uuid.UUID, date | None]) -> date | None:
+    """The Listing's effective deadline while it is available and has one, else the snapshot
+    deadline (AD-7): a Listing that lost its deadline never hides the snapshot's."""
+    if application.listing_id is not None:
+        effective = available.get(application.listing_id)
+        if effective is not None:
+            return effective
+    return application.deadline
 
 
 async def _view(session: AsyncSession, application: Application) -> ApplicationView:
+    available = await _available_deadlines(session, application.owner_id, [application])
     return ApplicationView(
         application,
         await allowed_next(session, application),
-        await _listing_available(session, application),
+        application.listing_id is not None and application.listing_id in available,
         await _today(session, application.owner_id),
+        _deadline(application, available),
     )
 
 
@@ -151,10 +173,15 @@ async def save_listing(
     return await _view(session, application), True
 
 
+async def _timezone(session: AsyncSession, owner_id: uuid.UUID) -> str:
+    """The Student's Preferences time zone as a valid IANA name (default Asia/Kolkata)."""
+    prefs = await profile_service.get_preferences(session, owner_id)
+    return clock.zone(prefs.timezone if prefs is not None else None).key
+
+
 async def _today(session: AsyncSession, owner_id: uuid.UUID) -> date:
     """Today in the Student's Preferences time zone (default Asia/Kolkata)."""
-    prefs = await profile_service.get_preferences(session, owner_id)
-    return clock.local_day(prefs.timezone if prefs is not None else None)
+    return clock.local_day(await _timezone(session, owner_id))
 
 
 async def transition(
@@ -314,3 +341,204 @@ async def application_for_listing(
     """The id of the owner's Application for ``listing_id``, or None."""
     application = await repo.get_by_listing(session, owner_id, listing_id)
     return application.id if application is not None else None
+
+
+# --------------------------------------------------------------------------- the Tracker (4.2)
+
+INVALID_CURSOR = "The cursor is not valid. Start again without a cursor."
+MAX_COMPANY_CHARS = 100
+DEFAULT_PAGE = 20
+MAX_PAGE = 50
+DEFAULT_DEADLINE_DAYS = 30
+MAX_DEADLINE_DAYS = 180
+MAX_UPCOMING = 20
+# The most open Applications read for the deadlines section (newest saved first).
+MAX_DEADLINE_CANDIDATES = 500
+# Statuses whose deadline still matters.
+DEADLINE_STATUSES = (SAVED, APPLIED, INTERVIEW)
+MAX_LISTING_IDS = 50
+
+DateBy = Literal["saved", "applied"]
+
+
+@dataclass(frozen=True)
+class TrackerItem:
+    """One Tracker row: the Application view plus the Student's STORED Match Score of its
+    Listing (None when there is none or the Listing is no longer available)."""
+
+    view: ApplicationView
+    score: int | None
+
+
+@dataclass(frozen=True)
+class TrackerPage:
+    items: list[TrackerItem]
+    total: int
+    next_cursor: str | None
+
+
+@dataclass(frozen=True)
+class UpcomingDeadline:
+    application: Application
+    deadline: date
+    days_left: int
+    in_pool: bool
+
+
+def encode_cursor(application: Application) -> str:
+    raw = f"{application.created_at.isoformat()}|{application.id}".encode()
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+def decode_cursor(cursor: str) -> tuple[datetime, uuid.UUID]:
+    """The ``(created_at, id)`` keyset of an opaque cursor; 422 when it is not one."""
+    try:
+        raw = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)).decode()
+        stamp, application_id = raw.split("|")
+        at = datetime.fromisoformat(stamp)
+        if at.tzinfo is None:
+            raise ValueError("naive timestamp")
+        return at, uuid.UUID(application_id)
+    except (ValueError, binascii.Error, UnicodeDecodeError) as exc:
+        raise InvalidInputError(["query", "cursor"], INVALID_CURSOR) from exc
+
+
+def _company_filter(company: str | None) -> str | None:
+    if company is None:
+        return None
+    text = company.strip()
+    if not 1 <= len(text) <= MAX_COMPANY_CHARS:
+        raise InvalidInputError(
+            ["query", "company"],
+            f"The company filter must be 1 to {MAX_COMPANY_CHARS} characters.",
+        )
+    return text
+
+
+async def _allowed_next_many(
+    session: AsyncSession, owner_id: uuid.UUID, applications: list[Application]
+) -> dict[uuid.UUID, tuple[str, ...]]:
+    """Batch :func:`allowed_next`: at most one history query for the whole page."""
+    closed = [(a.id, a.status) for a in applications if a.status in CLOSED]
+    previous = await repo.statuses_before_closing(session, owner_id, closed)
+    allowed: dict[uuid.UUID, tuple[str, ...]] = {}
+    for a in applications:
+        if a.status in CLOSED:
+            before = previous.get(a.id)
+            allowed[a.id] = (before,) if before is not None else ()
+        else:
+            allowed[a.id] = TRANSITIONS.get(a.status, ())
+    return allowed
+
+
+def _local_midnight(day: date, timezone: str) -> datetime:
+    """The UTC instant at which ``day`` starts in ``timezone`` (an unknown zone falls back to
+    the default, as everywhere else)."""
+    try:
+        return datetime.combine(day, time(0), clock.zone(timezone)).astimezone(UTC)
+    except OverflowError:
+        raise InvalidInputError(["query", "date_from"], "The date is out of range.") from None
+
+
+async def list_applications(
+    session: AsyncSession,
+    owner_id: uuid.UUID,
+    *,
+    statuses: Iterable[str] = (),
+    company: str | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    date_by: DateBy = "saved",
+    limit: int = DEFAULT_PAGE,
+    cursor: str | None = None,
+) -> TrackerPage:
+    """The Student's Applications matching every given filter, ``created_at DESC, id DESC``,
+    with ``total`` counting all matching rows. ``company`` is a case-insensitive substring of
+    the snapshot company (trimmed, 1 to 100 characters, else 422). The date range (inclusive)
+    applies to the save date in the Student's time zone (``saved``) or to ``applied_on``
+    (``applied``); ``date_from`` after ``date_to`` is a 422, as is an invalid cursor.
+
+    Each row carries the effective deadline while its Listing is available (else the
+    snapshot) and the STORED Match Score of an available Listing (never computed here). A
+    fixed number of queries per page, never one per row: preferences, the page, the count,
+    closed-Status history, Listing availability and deadlines, and stored scores."""
+    if date_from is not None and date_to is not None and date_from > date_to:
+        raise InvalidInputError(["query", "date_from"], "The start date is after the end date.")
+    after = decode_cursor(cursor) if cursor else None
+    limit = max(1, min(limit, MAX_PAGE))
+    timezone = await _timezone(session, owner_id)
+    saved = date_by == "saved"
+    filters = repo.ListFilters(
+        statuses=tuple(dict.fromkeys(statuses)),
+        company=_company_filter(company),
+        saved_from=_local_midnight(date_from, timezone) if saved and date_from else None,
+        saved_before=(
+            _local_midnight(date_to + timedelta(days=1), timezone)
+            if saved and date_to and date_to < date.max
+            else None
+        ),
+        applied_from=date_from if not saved else None,
+        applied_to=date_to if not saved else None,
+    )
+    rows = await repo.list_page(session, owner_id, filters, limit=limit + 1, after=after)
+    page = rows[:limit]
+    total = await repo.count(session, owner_id, filters)
+    allowed = await _allowed_next_many(session, owner_id, page)
+    available = await _available_deadlines(session, owner_id, page)
+    scores = (
+        await matching_service.stored_scores(session, owner_id, available) if available else {}
+    )
+    today = clock.local_day(timezone)
+    items = []
+    for a in page:
+        in_pool = a.listing_id is not None and a.listing_id in available
+        view = ApplicationView(a, allowed[a.id], in_pool, today, _deadline(a, available))
+        score = scores.get(a.listing_id) if in_pool and a.listing_id is not None else None
+        items.append(TrackerItem(view, score))
+    next_cursor = encode_cursor(page[-1]) if len(rows) > limit else None
+    return TrackerPage(items, total, next_cursor)
+
+
+async def upcoming_deadlines(
+    session: AsyncSession, owner_id: uuid.UUID, *, days: int = DEFAULT_DEADLINE_DAYS
+) -> list[UpcomingDeadline]:
+    """The Student's Saved, Applied and Interview Applications whose deadline (effective
+    while the Listing is available, else the snapshot) falls from today to today + ``days``
+    (1 to 180, else 422) in their time zone, by deadline then title, at most 20. SQL drops
+    snapshot-only rows outside the window and reads at most 500 candidates (newest saved
+    first) before one effective-deadline lookup."""
+    if not 1 <= days <= MAX_DEADLINE_DAYS:
+        raise InvalidInputError(["query", "days"], f"Days must be 1 to {MAX_DEADLINE_DAYS}.")
+    today = await _today(session, owner_id)
+    last = today + timedelta(days=days)
+    applications = await repo.deadline_candidates(
+        session,
+        owner_id,
+        DEADLINE_STATUSES,
+        first=today,
+        last=last,
+        limit=MAX_DEADLINE_CANDIDATES,
+    )
+    available = await _available_deadlines(session, owner_id, applications)
+    upcoming = []
+    for a in applications:
+        deadline = _deadline(a, available)
+        if deadline is not None and today <= deadline <= last:
+            in_pool = a.listing_id is not None and a.listing_id in available
+            upcoming.append(UpcomingDeadline(a, deadline, (deadline - today).days, in_pool))
+    upcoming.sort(key=lambda u: (u.deadline, u.application.title.casefold(), u.application.id))
+    return upcoming[:MAX_UPCOMING]
+
+
+async def applications_for_listings(
+    session: AsyncSession, owner_id: uuid.UUID, listing_ids: Iterable[uuid.UUID]
+) -> list[tuple[uuid.UUID, uuid.UUID]]:
+    """``(listing_id, application_id)`` for each given Listing the Student has saved, in
+    request order. At most 50 distinct ids (de-duplicated first), else 422."""
+    ids = list(dict.fromkeys(listing_ids))
+    if len(ids) > MAX_LISTING_IDS:
+        raise InvalidInputError(
+            ["query", "ids"], f"Ask for at most {MAX_LISTING_IDS} Listings at a time."
+        )
+    found = await repo.ids_for_listings(session, owner_id, ids)
+    return [(lid, found[lid]) for lid in ids if lid in found]

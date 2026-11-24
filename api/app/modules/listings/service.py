@@ -473,6 +473,28 @@ async def visible_items(
     return [BrowseItem(listing, label) for listing, label in rows]
 
 
+async def effective_deadlines(
+    session: AsyncSession, owner_id: uuid.UUID, listing_ids: Iterable[uuid.UUID]
+) -> dict[uuid.UUID, date | None]:
+    """``{listing_id: deadline}`` of the effective deadline of each given Listing that is
+    visible to ``owner_id`` and not expired, in one query. A Listing that is not (unknown,
+    expired, or another Student's private Listing) is absent from the dict, so the keys are
+    also the Listings still available to the owner.
+
+    Phase 1 has no overrides: the effective deadline is the Listing's own ``deadline``. Phase
+    2 (AD-7) makes it the owner's override, else the extracted deadline, else the source
+    deadline."""
+    return await repo.visible_deadlines(session, owner_id, sorted(set(listing_ids)))
+
+
+async def effective_deadline(
+    session: AsyncSession, owner_id: uuid.UUID, listing_id: uuid.UUID
+) -> date | None:
+    """The effective deadline of one Listing visible to ``owner_id`` (see
+    :func:`effective_deadlines`); None when it has none or is not visible to the owner."""
+    return (await effective_deadlines(session, owner_id, [listing_id])).get(listing_id)
+
+
 @dataclass(frozen=True)
 class ScoringInput:
     """What the Match Score needs from one Listing (Story 3.1): never the description, which

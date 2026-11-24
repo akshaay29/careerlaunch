@@ -7,6 +7,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { type Feed, type FeedItem, getFeed } from "@/api";
 import { ListingCard } from "@/components/listings/listing-card";
 import { MatchScoreBadge } from "@/components/matching/score-breakdown-view";
+import { fetchSavedState } from "@/components/tracker/saved-state";
 import { Button } from "@/components/ui/button";
 import { LOGIN_PATH } from "@/lib/auth-paths";
 import {
@@ -120,6 +121,8 @@ export function FeedView({ showBelow }: { showBelow: boolean }) {
   const [load, setLoad] = useState<Load>({ kind: "loading" });
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  // {listing_id: application_id} of the shown Listings the Student has saved.
+  const [saved, setSaved] = useState<Record<string, string>>({});
   // retry/loadMore/refresh finish after an await: never set state once unmounted.
   const mounted = useRef(true);
 
@@ -130,10 +133,30 @@ export function FeedView({ showBelow }: { showBelow: boolean }) {
     };
   }, []);
 
+  // Bumped on every full (first-page) load: a lookup from an older load is dropped.
+  const loads = useRef(0);
+
+  /** Looks up which Listings of a loaded page are saved (after the page is shown). A full
+   * load (`fresh`) replaces the map; Load more adds to it. */
+  function lookupSaved(items: FeedItem[], fresh: boolean) {
+    if (fresh) {
+      loads.current += 1;
+      setSaved({});
+    }
+    const load = loads.current;
+    if (items.length === 0) return;
+    void fetchSavedState(items.map((item) => item.id)).then((found) => {
+      if (!mounted.current || loads.current !== load) return;
+      setSaved((prev) => (fresh ? found : { ...prev, ...found }));
+    });
+  }
+
   useEffect(() => {
     let active = true;
     fetchFeed(showBelow).then((next) => {
-      if (active) setLoad(next);
+      if (!active) return;
+      setLoad(next);
+      if (next.kind === "ok") lookupSaved(next.items, true);
     });
     return () => {
       active = false;
@@ -148,6 +171,7 @@ export function FeedView({ showBelow }: { showBelow: boolean }) {
     if (!mounted.current) return;
     setBusy(false);
     setLoad(next);
+    if (next.kind === "ok") lookupSaved(next.items, true);
   }
 
   async function loadMore(cursor: string) {
@@ -162,6 +186,7 @@ export function FeedView({ showBelow }: { showBelow: boolean }) {
     }
     setBusy(false);
     if (next.kind === "ok") {
+      lookupSaved(next.items, false);
       setLoad((prev) =>
         prev.kind === "ok"
           ? { ...next, items: mergeFeedPages(prev.items, next.items) }
@@ -237,7 +262,11 @@ export function FeedView({ showBelow }: { showBelow: boolean }) {
         <ul className="flex flex-col gap-3">
           {items.map((item) => (
             <li key={item.id}>
-              <ListingCard listing={item} badge={<ScoreBadge item={item} />} />
+              <ListingCard
+                listing={item}
+                badge={<ScoreBadge item={item} />}
+                applicationId={saved[item.id] ?? null}
+              />
             </li>
           ))}
         </ul>

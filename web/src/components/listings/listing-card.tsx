@@ -24,9 +24,18 @@ export function SkillChips({ skills }: { skills: ListingOut["skills"] }) {
 /**
  * One Listing in the browse list or the feed. All scraped text is rendered as plain text.
  * `badge` (the Match Score with "Why this score", in the feed and search results) is shown
- * beside the title. "Save" (idempotent) turns into "Saved · Open" once the Listing is saved.
+ * beside the title. "Save" (idempotent) turns into "Saved · Open" once the Listing is saved;
+ * `applicationId` (from the page's batch saved-state lookup) shows it as saved from the start.
  */
-export function ListingCard({ listing, badge }: { listing: ListingOut; badge?: ReactNode }) {
+export function ListingCard({
+  listing,
+  badge,
+  applicationId = null,
+}: {
+  listing: ListingOut;
+  badge?: ReactNode;
+  applicationId?: string | null;
+}) {
   const dates = listingDates(listing);
   const meta = listingMeta(listing);
   return (
@@ -47,7 +56,11 @@ export function ListingCard({ listing, badge }: { listing: ListingOut; badge?: R
       <div className="flex flex-wrap items-end justify-between gap-3">
         <ListingAttribution listing={listing} />
         <div className="flex flex-wrap items-start gap-2">
-          <SaveListingButton listingId={listing.id} />
+          <SaveListingButton
+            key={applicationId ?? "unsaved"}
+            listingId={listing.id}
+            applicationId={applicationId}
+          />
           <ApplyLink listing={listing} />
         </div>
       </div>

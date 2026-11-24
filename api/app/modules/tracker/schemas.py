@@ -7,7 +7,12 @@ from typing import Literal, Self
 from pydantic import BaseModel, Field
 
 from app.modules.tracker.models import ApplicationStatusHistory
-from app.modules.tracker.service import MAX_NOTES, ApplicationView
+from app.modules.tracker.service import (
+    MAX_NOTES,
+    ApplicationView,
+    TrackerItem,
+    UpcomingDeadline,
+)
 
 ApplicationStatus = Literal["saved", "applied", "interview", "offer", "rejected", "withdrawn"]
 
@@ -17,8 +22,9 @@ class SaveListingIn(BaseModel):
 
 
 class ApplicationOut(BaseModel):
-    """One Application. ``title``, ``company``, ``url`` and ``deadline`` are the snapshot taken
-    when the Listing was saved (scraped, untrusted text: render it as plain text).
+    """One Application. ``title``, ``company`` and ``url`` are the snapshot taken when the
+    Listing was saved (scraped, untrusted text: render it as plain text). ``deadline`` is the
+    Listing's current deadline while it is available to you, else the snapshot.
     ``listing_available`` is false once the Listing is gone, expired or no longer visible to
     you. ``allowed_next`` lists the Statuses it may move to now (empty when none). ``today``
     is your local date (Preferences time zone): the latest allowed ``applied_on``."""
@@ -51,7 +57,7 @@ class ApplicationOut(BaseModel):
             title=a.title,
             company=a.company,
             url=a.url,
-            deadline=a.deadline,
+            deadline=view.deadline,
             notes=a.notes,
             applied_on=a.applied_on,
             resume_id=a.resume_id,
@@ -102,3 +108,70 @@ class ApplicationForListing(BaseModel):
     """Your Application for a Listing, or null when you have not saved it."""
 
     application_id: uuid.UUID | None
+
+
+class TrackerItemOut(ApplicationOut):
+    """One Tracker row. ``deadline`` is the Listing's current (effective) deadline while it is
+    available to you, else the snapshot. ``in_pool`` equals ``listing_available``. ``score``
+    is your stored Match Score of the Listing (null when none is stored or the Listing is no
+    longer available)."""
+
+    in_pool: bool
+    score: int | None
+
+    @classmethod
+    def from_item(cls, item: TrackerItem) -> Self:
+        base = ApplicationOut.from_view(item.view).model_dump()
+        return cls(**base, in_pool=item.view.listing_available, score=item.score)
+
+
+class TrackerPageOut(BaseModel):
+    """One page of your Applications, most recently saved first. ``total`` counts every
+    Application matching the filters; ``next_cursor`` is set when more follow."""
+
+    items: list[TrackerItemOut]
+    total: int
+    next_cursor: str | None
+
+
+class UpcomingDeadlineOut(BaseModel):
+    """An open Application (Saved, Applied or Interview) with a deadline coming up.
+    ``days_left`` is 0 for today, in your time zone."""
+
+    id: uuid.UUID
+    title: str
+    company: str
+    status: ApplicationStatus
+    deadline: date
+    days_left: int
+    in_pool: bool
+
+    @classmethod
+    def from_upcoming(cls, u: UpcomingDeadline) -> Self:
+        a = u.application
+        return cls(
+            id=a.id,
+            title=a.title,
+            company=a.company,
+            status=a.status,  # type: ignore[arg-type]
+            deadline=u.deadline,
+            days_left=u.days_left,
+            in_pool=u.in_pool,
+        )
+
+
+class UpcomingDeadlines(BaseModel):
+    """Upcoming deadlines, soonest first (then by title), at most 20."""
+
+    items: list[UpcomingDeadlineOut]
+
+
+class SavedListing(BaseModel):
+    listing_id: uuid.UUID
+    application_id: uuid.UUID
+
+
+class SavedListings(BaseModel):
+    """Your Applications for the asked Listings; unsaved Listings are left out."""
+
+    items: list[SavedListing]

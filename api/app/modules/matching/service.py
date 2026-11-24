@@ -175,6 +175,19 @@ async def match_scores(
     return [ScoreItem(lid, *found[lid]) for lid in ids if lid in found]
 
 
+async def stored_scores(
+    session: AsyncSession, owner_id: uuid.UUID, listing_ids: Iterable[uuid.UUID]
+) -> dict[uuid.UUID, int]:
+    """``{listing_id: score}`` of the owner's STORED Match Scores for the given Listings that
+    are visible to them and not expired, in one query. Listings without a stored score are
+    left out; nothing is ever scored here (the Tracker shows only what matching stored)."""
+    ids = sorted(set(listing_ids))
+    if not ids:
+        return {}
+    stored = await repo.shown_scores(session, owner_id, ids)
+    return {listing_id: value for listing_id, (value, _) in stored.items()}
+
+
 async def record_breakdown_opened(
     session: AsyncSession, owner_id: uuid.UUID, listing_id: uuid.UUID
 ) -> None:

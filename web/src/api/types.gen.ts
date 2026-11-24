@@ -44,8 +44,9 @@ export type ApplicationHistory = {
 /**
  * ApplicationOut
  *
- * One Application. ``title``, ``company``, ``url`` and ``deadline`` are the snapshot taken
- * when the Listing was saved (scraped, untrusted text: render it as plain text).
+ * One Application. ``title``, ``company`` and ``url`` are the snapshot taken when the
+ * Listing was saved (scraped, untrusted text: render it as plain text). ``deadline`` is the
+ * Listing's current deadline while it is available to you, else the snapshot.
  * ``listing_available`` is false once the Listing is gone, expired or no longer visible to
  * you. ``allowed_next`` lists the Statuses it may move to now (empty when none). ``today``
  * is your local date (Preferences time zone): the latest allowed ``applied_on``.
@@ -1018,6 +1019,32 @@ export type SaveListingIn = {
 };
 
 /**
+ * SavedListing
+ */
+export type SavedListing = {
+    /**
+     * Listing Id
+     */
+    listing_id: string;
+    /**
+     * Application Id
+     */
+    application_id: string;
+};
+
+/**
+ * SavedListings
+ *
+ * Your Applications for the asked Listings; unsaved Listings are left out.
+ */
+export type SavedListings = {
+    /**
+     * Items
+     */
+    items: Array<SavedListing>;
+};
+
+/**
  * ScoreBreakdown
  *
  * Why a Listing scored what it did. The components' ``points`` sum to the score. Skills
@@ -1219,6 +1246,106 @@ export type StatusChange = {
 };
 
 /**
+ * TrackerItemOut
+ *
+ * One Tracker row. ``deadline`` is the Listing's current (effective) deadline while it is
+ * available to you, else the snapshot. ``in_pool`` equals ``listing_available``. ``score``
+ * is your stored Match Score of the Listing (null when none is stored or the Listing is no
+ * longer available).
+ */
+export type TrackerItemOut = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Listing Id
+     */
+    listing_id: string | null;
+    /**
+     * Listing Available
+     */
+    listing_available: boolean;
+    /**
+     * Status
+     */
+    status: 'saved' | 'applied' | 'interview' | 'offer' | 'rejected' | 'withdrawn';
+    /**
+     * Allowed Next
+     */
+    allowed_next: Array<'saved' | 'applied' | 'interview' | 'offer' | 'rejected' | 'withdrawn'>;
+    /**
+     * Title
+     */
+    title: string;
+    /**
+     * Company
+     */
+    company: string;
+    /**
+     * Url
+     */
+    url: string;
+    /**
+     * Deadline
+     */
+    deadline: string | null;
+    /**
+     * Notes
+     */
+    notes: string | null;
+    /**
+     * Applied On
+     */
+    applied_on: string | null;
+    /**
+     * Resume Id
+     */
+    resume_id: string | null;
+    /**
+     * Created At
+     */
+    created_at: string;
+    /**
+     * Updated At
+     */
+    updated_at: string;
+    /**
+     * Today
+     */
+    today: string;
+    /**
+     * In Pool
+     */
+    in_pool: boolean;
+    /**
+     * Score
+     */
+    score: number | null;
+};
+
+/**
+ * TrackerPageOut
+ *
+ * One page of your Applications, most recently saved first. ``total`` counts every
+ * Application matching the filters; ``next_cursor`` is set when more follow.
+ */
+export type TrackerPageOut = {
+    /**
+     * Items
+     */
+    items: Array<TrackerItemOut>;
+    /**
+     * Total
+     */
+    total: number;
+    /**
+     * Next Cursor
+     */
+    next_cursor: string | null;
+};
+
+/**
  * TransitionIn
  */
 export type TransitionIn = {
@@ -1226,6 +1353,55 @@ export type TransitionIn = {
      * Status
      */
     status: 'saved' | 'applied' | 'interview' | 'offer' | 'rejected' | 'withdrawn';
+};
+
+/**
+ * UpcomingDeadlineOut
+ *
+ * An open Application (Saved, Applied or Interview) with a deadline coming up.
+ * ``days_left`` is 0 for today, in your time zone.
+ */
+export type UpcomingDeadlineOut = {
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Title
+     */
+    title: string;
+    /**
+     * Company
+     */
+    company: string;
+    /**
+     * Status
+     */
+    status: 'saved' | 'applied' | 'interview' | 'offer' | 'rejected' | 'withdrawn';
+    /**
+     * Deadline
+     */
+    deadline: string;
+    /**
+     * Days Left
+     */
+    days_left: number;
+    /**
+     * In Pool
+     */
+    in_pool: boolean;
+};
+
+/**
+ * UpcomingDeadlines
+ *
+ * Upcoming deadlines, soonest first (then by title), at most 20.
+ */
+export type UpcomingDeadlines = {
+    /**
+     * Items
+     */
+    items: Array<UpcomingDeadlineOut>;
 };
 
 /**
@@ -2225,6 +2401,62 @@ export type GetFeedResponses = {
 
 export type GetFeedResponse = GetFeedResponses[keyof GetFeedResponses];
 
+export type ListApplicationsData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Status
+         */
+        status?: Array<'saved' | 'applied' | 'interview' | 'offer' | 'rejected' | 'withdrawn'> | null;
+        /**
+         * Company
+         */
+        company?: string | null;
+        /**
+         * Date From
+         */
+        date_from?: string | null;
+        /**
+         * Date To
+         */
+        date_to?: string | null;
+        /**
+         * Date By
+         */
+        date_by?: 'saved' | 'applied';
+        /**
+         * Limit
+         */
+        limit?: number;
+        /**
+         * Cursor
+         */
+        cursor?: string | null;
+    };
+    url: '/api/v1/applications';
+};
+
+export type ListApplicationsErrors = {
+    /**
+     * Not signed in
+     */
+    401: unknown;
+    /**
+     * An unknown Status, a company filter over 100 characters, a start date after the end date, or an invalid cursor or limit
+     */
+    422: unknown;
+};
+
+export type ListApplicationsResponses = {
+    /**
+     * Successful Response
+     */
+    200: TrackerPageOut;
+};
+
+export type ListApplicationsResponse = ListApplicationsResponses[keyof ListApplicationsResponses];
+
 export type SaveListingData = {
     body: SaveListingIn;
     path?: never;
@@ -2261,6 +2493,70 @@ export type SaveListingResponses = {
 };
 
 export type SaveListingResponse = SaveListingResponses[keyof SaveListingResponses];
+
+export type ListUpcomingDeadlinesData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Days
+         */
+        days?: number;
+    };
+    url: '/api/v1/applications/deadlines';
+};
+
+export type ListUpcomingDeadlinesErrors = {
+    /**
+     * Not signed in
+     */
+    401: unknown;
+    /**
+     * ``days`` is not 1 to 180
+     */
+    422: unknown;
+};
+
+export type ListUpcomingDeadlinesResponses = {
+    /**
+     * Successful Response
+     */
+    200: UpcomingDeadlines;
+};
+
+export type ListUpcomingDeadlinesResponse = ListUpcomingDeadlinesResponses[keyof ListUpcomingDeadlinesResponses];
+
+export type GetApplicationsForListingsData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Ids
+         */
+        ids?: Array<string> | null;
+    };
+    url: '/api/v1/applications/by-listings';
+};
+
+export type GetApplicationsForListingsErrors = {
+    /**
+     * Not signed in
+     */
+    401: unknown;
+    /**
+     * More than 200 ids, more than 50 distinct ids, or an id is not a UUID
+     */
+    422: unknown;
+};
+
+export type GetApplicationsForListingsResponses = {
+    /**
+     * Successful Response
+     */
+    200: SavedListings;
+};
+
+export type GetApplicationsForListingsResponse = GetApplicationsForListingsResponses[keyof GetApplicationsForListingsResponses];
 
 export type GetApplicationForListingData = {
     body?: never;

@@ -4,7 +4,7 @@ import { Suspense } from "react";
 
 import { SignOutButton } from "@/components/auth/sign-out-button";
 import { FeedView } from "@/components/feed/feed-view";
-import { LISTINGS_PATH, SETTINGS_PATH } from "@/lib/auth-paths";
+import { LISTINGS_PATH, SETTINGS_PATH, TRACKER_PATH } from "@/lib/auth-paths";
 import { belowFromParam } from "@/lib/feed";
 import { NOT_AFFILIATED_NOTICE } from "@/lib/listings";
 
@@ -43,6 +43,11 @@ export default function FeedPage(props: PageProps<"/feed">) {
           browse all Listings
         </Link>
         . &ldquo;Apply&rdquo; opens the original posting. {NOT_AFFILIATED_NOTICE}
+      </p>
+      <p className="text-sm">
+        <Link className="underline" href={TRACKER_PATH} data-testid="feed-open-tracker">
+          My Tracker
+        </Link>
       </p>
       <Suspense fallback={<p className="text-muted-foreground">Loading your feed…</p>}>
         <FeedFromSearchParams searchParams={props.searchParams} />

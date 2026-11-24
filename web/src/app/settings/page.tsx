@@ -3,7 +3,7 @@ import Link from "next/link";
 
 import { SignOutButton } from "@/components/auth/sign-out-button";
 import { SETTINGS_ACCOUNT_PATH } from "@/lib/account-deletion";
-import { FEED_PATH, LISTINGS_PATH, ONBOARDING_PATH } from "@/lib/auth-paths";
+import { FEED_PATH, LISTINGS_PATH, ONBOARDING_PATH, TRACKER_PATH } from "@/lib/auth-paths";
 import { SETTINGS_CONSENT_PATH } from "@/lib/consent";
 import { SETTINGS_DOCUMENTS_PATH } from "@/lib/documents";
 import { SETTINGS_PREFERENCES_PATH } from "@/lib/preferences";
@@ -23,6 +23,11 @@ const PAGES = [
     href: LISTINGS_PATH,
     title: "Listings",
     description: "Browse jobs and internships from the shared pool.",
+  },
+  {
+    href: TRACKER_PATH,
+    title: "My Tracker",
+    description: "Your saved Listings, their Status and upcoming deadlines.",
   },
   {
     href: SETTINGS_CONSENT_PATH,
