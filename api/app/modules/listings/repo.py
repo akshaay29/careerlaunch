@@ -360,6 +360,19 @@ async def get_visible_many(
     return [(listing, label) for listing, label in (await session.execute(stmt)).all()]
 
 
+async def visible_deadlines(
+    session: AsyncSession, actor_id: uuid.UUID, listing_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, date | None]:
+    """``{listing_id: deadline}`` of the Listings of ``listing_ids`` visible to ``actor_id``
+    and not expired (others are left out), in one query."""
+    if not listing_ids:
+        return {}
+    stmt = select(Listing.id, Listing.deadline).where(
+        Listing.id.in_(listing_ids), _visible_to(actor_id), Listing.expired_at.is_(None)
+    )
+    return {listing_id: deadline for listing_id, deadline in (await session.execute(stmt)).all()}
+
+
 async def get_visible_scoring_input(
     session: AsyncSession, actor_id: uuid.UUID, listing_id: uuid.UUID
 ) -> tuple[str, list[str], str, list[str]] | None:

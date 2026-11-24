@@ -5,9 +5,10 @@ Student's Application is always a 404. Routers commit; the service never does.
 """
 
 import uuid
-from typing import Annotated
+from datetime import date
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import Actor, current_actor
@@ -17,10 +18,17 @@ from app.modules.tracker.schemas import (
     ApplicationForListing,
     ApplicationHistory,
     ApplicationOut,
+    ApplicationStatus,
     ApplicationUpdate,
+    SavedListing,
+    SavedListings,
     SaveListingIn,
     StatusChange,
+    TrackerItemOut,
+    TrackerPageOut,
     TransitionIn,
+    UpcomingDeadlineOut,
+    UpcomingDeadlines,
 )
 
 router = APIRouter(tags=["tracker"])
@@ -54,6 +62,99 @@ async def save_listing(
     if not created:
         response.status_code = 200
     return ApplicationOut.from_view(view)
+
+
+@router.get(
+    "/applications",
+    response_model=TrackerPageOut,
+    operation_id="listApplications",
+    responses={
+        **_UNAUTHORIZED,
+        422: {
+            "description": "An unknown Status, a company filter over 100 characters, a start "
+            "date after the end date, or an invalid cursor or limit",
+            **_PROBLEM,
+        },
+    },
+)
+async def list_applications(
+    actor: CurrentActor,
+    session: Session,
+    status: Annotated[list[ApplicationStatus] | None, Query(max_length=12)] = None,
+    company: Annotated[str | None, Query(max_length=service.MAX_COMPANY_CHARS)] = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    date_by: Literal["saved", "applied"] = "saved",
+    limit: Annotated[int, Query(ge=1, le=service.MAX_PAGE)] = service.DEFAULT_PAGE,
+    cursor: Annotated[str | None, Query(max_length=200)] = None,
+) -> TrackerPageOut:
+    """Your Applications, most recently saved first. Filters combine: ``status`` (repeat
+    for any of several), ``company`` (case-insensitive part of the company name), and an
+    inclusive ``date_from``/``date_to`` range on the save date in your time zone
+    (``date_by=saved``) or on the applied date (``date_by=applied``; Applications without one
+    are left out). ``total`` counts every match."""
+    page = await service.list_applications(
+        session,
+        actor.id,
+        statuses=status or [],
+        company=company,
+        date_from=date_from,
+        date_to=date_to,
+        date_by=date_by,
+        limit=limit,
+        cursor=cursor,
+    )
+    return TrackerPageOut(
+        items=[TrackerItemOut.from_item(i) for i in page.items],
+        total=page.total,
+        next_cursor=page.next_cursor,
+    )
+
+
+@router.get(
+    "/applications/deadlines",
+    response_model=UpcomingDeadlines,
+    operation_id="listUpcomingDeadlines",
+    responses={**_UNAUTHORIZED, 422: {"description": "``days`` is not 1 to 180", **_PROBLEM}},
+)
+async def list_upcoming_deadlines(
+    actor: CurrentActor,
+    session: Session,
+    days: Annotated[
+        int, Query(ge=1, le=service.MAX_DEADLINE_DAYS)
+    ] = service.DEFAULT_DEADLINE_DAYS,
+) -> UpcomingDeadlines:
+    """Your Saved, Applied and Interview Applications whose deadline falls from today to
+    today + ``days`` (your time zone), soonest first, at most 20."""
+    upcoming = await service.upcoming_deadlines(session, actor.id, days=days)
+    return UpcomingDeadlines(items=[UpcomingDeadlineOut.from_upcoming(u) for u in upcoming])
+
+
+@router.get(
+    "/applications/by-listings",
+    response_model=SavedListings,
+    operation_id="getApplicationsForListings",
+    responses={
+        **_UNAUTHORIZED,
+        422: {
+            "description": "More than 200 ids, more than 50 distinct ids, or an id is not "
+            "a UUID",
+            **_PROBLEM,
+        },
+    },
+)
+async def get_applications_for_listings(
+    actor: CurrentActor,
+    session: Session,
+    ids: Annotated[list[uuid.UUID] | None, Query(max_length=200)] = None,
+) -> SavedListings:
+    """Which of the given Listings you have saved, with the Application ids. ``ids`` takes at
+    most 200 raw values and at most 50 distinct ids (duplicates are ignored). Unsaved
+    Listings are left out."""
+    pairs = await service.applications_for_listings(session, actor.id, ids or [])
+    return SavedListings(
+        items=[SavedListing(listing_id=lid, application_id=aid) for lid, aid in pairs]
+    )
 
 
 @router.get(

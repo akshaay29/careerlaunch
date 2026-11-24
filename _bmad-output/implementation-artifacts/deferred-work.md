@@ -133,3 +133,7 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-4-1-save-a-listing-and-track-its-status.md`
   summary: Show the saved state on feed, search and browse cards (a batch by-listing lookup or `application_id` on list items), and add a DB-role RLS test for `applications` and `application_status_history`.
   evidence: Cards render Save without knowing the saved state; only API-level ownership is tested.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-4-2-my-tracker-view.md`
+  summary: Add a web component or e2e harness and cover the Tracker filters, the Upcoming deadlines section, and the "Saved · Open" card wiring (feed, search, browse), including lookup failures.
+  evidence: Web tests cover only `src/lib` helpers; the card lookup and filter wiring can regress silently.

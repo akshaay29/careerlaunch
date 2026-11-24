@@ -12,6 +12,7 @@ import {
   searchListings,
 } from "@/api";
 import { MatchScoreBadge } from "@/components/matching/score-breakdown-view";
+import { fetchSavedState } from "@/components/tracker/saved-state";
 import { Button } from "@/components/ui/button";
 import { LOGIN_PATH } from "@/lib/auth-paths";
 import { matchScoreIds, mergeScores } from "@/lib/breakdown";
@@ -180,6 +181,10 @@ export function ListingBrowser({ query = "" }: { query?: string }) {
     byId: {},
   });
   const shownScores = scores.query === query ? scores.byId : {};
+  // {listing_id: application_id} of the shown Listings the Student has saved.
+  const [saved, setSaved] = useState<Record<string, string>>({});
+  // Bumped on every full (first-page) load: a saved-state lookup from an older load is dropped.
+  const loads = useRef(0);
   // The query being shown (null once unmounted): a response for any other query is dropped.
   const current = useRef<string | null>(query);
 
@@ -190,8 +195,20 @@ export function ListingBrowser({ query = "" }: { query?: string }) {
     };
   }, [query]);
 
-  /** Fetches the scores of a search results page after it is shown (search only). */
-  function scorePage(forQuery: string, items: ListingOut[]) {
+  /** After a page is shown: its saved state, and its scores (search results only). A full
+   * load (`fresh`: first page, retry) replaces the saved-state map; Load more adds to it. */
+  function scorePage(forQuery: string, items: ListingOut[], fresh: boolean) {
+    if (fresh) {
+      loads.current += 1;
+      setSaved({});
+    }
+    const load = loads.current;
+    if (items.length > 0) {
+      void fetchSavedState(items.map((item) => item.id)).then((found) => {
+        if (current.current !== forQuery || loads.current !== load) return;
+        setSaved((prev) => (fresh ? found : { ...prev, ...found }));
+      });
+    }
     if (!forQuery) return;
     void fetchScores(items).then((found) => {
       if (current.current !== forQuery) return;
@@ -209,7 +226,7 @@ export function ListingBrowser({ query = "" }: { query?: string }) {
     fetchPage(forQuery).then((next) => {
       if (!active) return;
       setLoad(next);
-      if (next.kind === "ok") scorePage(forQuery, next.items);
+      if (next.kind === "ok") scorePage(forQuery, next.items, true);
     });
     return () => {
       active = false;
@@ -223,7 +240,7 @@ export function ListingBrowser({ query = "" }: { query?: string }) {
     if (current.current !== forQuery) return;
     setBusy(false);
     setLoad(next);
-    if (next.kind === "ok") scorePage(forQuery, next.items);
+    if (next.kind === "ok") scorePage(forQuery, next.items, true);
   }
 
   async function loadMore(from: Next) {
@@ -234,7 +251,7 @@ export function ListingBrowser({ query = "" }: { query?: string }) {
     if (current.current !== forQuery) return;
     setBusy(false);
     if (next.kind === "ok") {
-      scorePage(forQuery, next.items);
+      scorePage(forQuery, next.items, false);
       setLoad((prev) =>
         prev.kind === "ok"
           ? { kind: "ok", items: mergeListingPages(prev.items, next.items), next: next.next }
@@ -321,6 +338,7 @@ export function ListingBrowser({ query = "" }: { query?: string }) {
           <li key={listing.id}>
             <ListingCard
               listing={listing}
+              applicationId={saved[listing.id] ?? null}
               badge={
                 query && listing.id in shownScores ? (
                   <MatchScoreBadge listingId={listing.id} score={shownScores[listing.id]} />
