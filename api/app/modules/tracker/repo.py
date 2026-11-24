@@ -22,7 +22,7 @@ async def insert_application(
     status: str,
     title: str,
     company: str,
-    url: str,
+    url: str | None,
     deadline: date | None,
     now: datetime,
 ) -> Application | None:

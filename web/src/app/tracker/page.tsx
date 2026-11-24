@@ -4,7 +4,9 @@ import { Suspense } from "react";
 
 import { SignOutButton } from "@/components/auth/sign-out-button";
 import { TrackerView } from "@/components/tracker/tracker-view";
+import { Button } from "@/components/ui/button";
 import { FEED_PATH, LISTINGS_PATH, SETTINGS_PATH } from "@/lib/auth-paths";
+import { ADD_EXTERNAL_JOB_PATH } from "@/lib/manual-listing";
 import { parseTrackerFilters } from "@/lib/tracker";
 
 export const metadata: Metadata = { title: "My Tracker · CareerLaunch" };
@@ -43,6 +45,13 @@ export default function TrackerPage(props: PageProps<"/tracker">) {
         </Link>
         .
       </p>
+      <div>
+        <Button asChild variant="outline" size="sm">
+          <Link href={ADD_EXTERNAL_JOB_PATH} data-testid="add-external-job-link">
+            Add external job
+          </Link>
+        </Button>
+      </div>
       <Suspense fallback={<p className="text-muted-foreground">Loading your Tracker…</p>}>
         <TrackerFromSearchParams searchParams={props.searchParams} />
       </Suspense>

@@ -23,6 +23,7 @@ from pydantic import (
     Field,
     StringConstraints,
     field_validator,
+    model_validator,
 )
 
 # Limits shared with the ``listings`` CHECK constraints (migration 0011_listings).
@@ -34,6 +35,9 @@ MAX_DESCRIPTION_CHARS = 100_000
 MAX_URL_CHARS = 2048
 
 SOURCE_ID_PATTERN = r"^[a-z][a-z0-9_]{0,31}$"
+# The Source of jobs a Student adds from another site (Story 4.3): the only one whose drafts
+# may come without a URL.
+MANUAL_SOURCE = "manual"
 
 JobType = Literal["internship", "full_time"]
 
@@ -85,6 +89,8 @@ HttpUrl = Annotated[
 class ListingDraft(BaseModel):
     """One Listing as a Source sees it, before ingestion. Text is stripped and length-capped;
     an over-length field or a non-http(s) URL is a ``ValidationError`` (nothing is written).
+    Every Source sends a ``url``; only a ``manual`` draft (a job a Student added, Story 4.3)
+    may leave it out.
 
     ``description`` is used only during ingestion (skills and search lexemes) and is never
     stored or logged. ``repr`` hides it so a stray log line cannot leak it.
@@ -94,7 +100,7 @@ class ListingDraft(BaseModel):
 
     source: SourceId
     source_job_id: SourceJobId
-    url: HttpUrl
+    url: HttpUrl | None = None
     title: Title
     company_raw: Company = ""
     location_raw: Location = ""
@@ -110,6 +116,12 @@ class ListingDraft(BaseModel):
         if value is not None and value.tzinfo is None:
             return value.replace(tzinfo=UTC)
         return value
+
+    @model_validator(mode="after")
+    def _url_required(self) -> "ListingDraft":
+        if self.url is None and self.source != MANUAL_SOURCE:
+            raise ValueError("url is required (only a manual draft may leave it out)")
+        return self
 
 
 class SourceQuery(BaseModel):

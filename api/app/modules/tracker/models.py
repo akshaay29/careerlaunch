@@ -29,7 +29,8 @@ class Application(Base):
     resume_id: Mapped[uuid.UUID | None] = mapped_column()
     title: Mapped[str] = mapped_column(Text)
     company: Mapped[str] = mapped_column(Text, server_default="")
-    url: Mapped[str] = mapped_column(Text)
+    # NULL for a manual Listing added without a link (0020).
+    url: Mapped[str | None] = mapped_column(Text)
     deadline: Mapped[date | None] = mapped_column(Date)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

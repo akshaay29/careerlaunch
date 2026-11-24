@@ -4,29 +4,29 @@ import {
   NOT_AFFILIATED_NOTICE,
   applyLabel,
   safeExternalUrl,
-  sourceAttribution,
+  sourceLine,
 } from "@/lib/listings";
 
 /**
  * "via LinkedIn" plus the not-affiliated notice. Shown on every card and detail page; a
- * manual Listing has no "via" line.
+ * manual Listing (one the Student added) says "Added by you" instead.
  */
 export function ListingAttribution({
   listing,
 }: {
   listing: Pick<ListingOut, "source" | "source_label">;
 }) {
-  const via = sourceAttribution(listing);
   return (
     <div className="flex flex-col gap-0.5 text-xs text-muted-foreground" data-testid="listing-attribution">
-      {via ? <span data-testid="listing-source">{via}</span> : null}
+      <span data-testid="listing-source">{sourceLine(listing)}</span>
       <span>{NOT_AFFILIATED_NOTICE}</span>
     </div>
   );
 }
 
 /**
- * "Apply" opens the Listing's source page in a new tab. Rendered only for an http(s) URL;
+ * "Apply" opens the Listing's source page in a new tab. Rendered only for an http(s) URL (a
+ * job added without a link has none);
  * `noopener noreferrer nofollow` so the job board gets no handle on this page or referrer.
  */
 export function ApplyLink({

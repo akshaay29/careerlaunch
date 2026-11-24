@@ -22,6 +22,14 @@ export function sourceAttribution(
   return listing.source === MANUAL_SOURCE ? null : `via ${listing.source_label}`;
 }
 
+/** Shown instead of "via <Source>" on a job the Student added from another site (Story 4.3). */
+export const ADDED_BY_YOU = "Added by you";
+
+/** The Source line of a Listing: "via LinkedIn", or "Added by you" for a manual Listing. */
+export function sourceLine(listing: Pick<ListingOut, "source" | "source_label">): string {
+  return sourceAttribution(listing) ?? ADDED_BY_YOU;
+}
+
 /** "Apply on LinkedIn", or plain "Apply" for a manual Listing. */
 export function applyLabel(listing: Pick<ListingOut, "source" | "source_label">): string {
   return listing.source === MANUAL_SOURCE ? "Apply" : `Apply on ${listing.source_label}`;

@@ -45,6 +45,8 @@ OUT_FIELDS = {
     "created_at",
     "updated_at",
     "today",
+    "is_manual",
+    "description",
 }
 
 
@@ -68,6 +70,7 @@ async def test_save_creates_a_saved_application_with_a_snapshot_and_a_pin(
     assert body["deadline"] == "2026-12-31"
     assert body["notes"] is None and body["applied_on"] is None and body["resume_id"] is None
     assert body["today"] == clock.local_day(None).isoformat()
+    assert body["is_manual"] is False and body["description"] is None
     assert tdb.history_rows(body["id"]) == [(None, "saved")]
     assert tdb.pin_count(listing) == 1
     assert tdb.count_applications(owner) == 1

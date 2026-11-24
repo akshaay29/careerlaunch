@@ -32,14 +32,15 @@ class Source(Base):
 
 class Listing(Base):
     """One Listing, unique on ``(source, source_job_id)``. ``visibility_owner_id`` NULL
-    means the shared pool. No column holds the description (AD-7)."""
+    means the shared pool. Pool Listings keep no description (AD-7); only a Student's own
+    manual Listing (Story 4.3) may have a ``private_description`` (and may have no ``url``)."""
 
     __tablename__ = "listings"
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid7)
     source: Mapped[str] = mapped_column(Text)
     source_job_id: Mapped[str] = mapped_column(Text)
-    url: Mapped[str] = mapped_column(Text)
+    url: Mapped[str | None] = mapped_column(Text)
     title: Mapped[str] = mapped_column(Text)
     company: Mapped[str] = mapped_column(Text, server_default="")
     location: Mapped[str] = mapped_column(Text, server_default="")
@@ -57,6 +58,8 @@ class Listing(Base):
     pin_count: Mapped[int] = mapped_column(Integer, server_default="0")
     relevance: Mapped[float] = mapped_column(Float, server_default="0")
     expired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Manual Listings only (0020); shown to the owner only, never loaded for browsing.
+    private_description: Mapped[str | None] = deferred(mapped_column(Text))
 
 
 class ProviderRun(Base):

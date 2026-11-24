@@ -45,11 +45,14 @@ export type ApplicationHistory = {
  * ApplicationOut
  *
  * One Application. ``title``, ``company`` and ``url`` are the snapshot taken when the
- * Listing was saved (scraped, untrusted text: render it as plain text). ``deadline`` is the
- * Listing's current deadline while it is available to you, else the snapshot.
- * ``listing_available`` is false once the Listing is gone, expired or no longer visible to
- * you. ``allowed_next`` lists the Statuses it may move to now (empty when none). ``today``
- * is your local date (Preferences time zone): the latest allowed ``applied_on``.
+ * Listing was saved (scraped, untrusted text: render it as plain text); ``url`` is null for
+ * a job you added without a link. ``deadline`` is the Listing's current deadline while it is
+ * available to you, else the snapshot. ``listing_available`` is false once the Listing is
+ * gone, expired or no longer visible to you. ``allowed_next`` lists the Statuses it may move
+ * to now (empty when none). ``today`` is your local date (Preferences time zone): the latest
+ * allowed ``applied_on``. ``is_manual`` is true for a job you added from another site
+ * ("Added by you"); ``description`` is the description you gave it (plain text), null
+ * otherwise.
  */
 export type ApplicationOut = {
     /**
@@ -83,7 +86,7 @@ export type ApplicationOut = {
     /**
      * Url
      */
-    url: string;
+    url: string | null;
     /**
      * Deadline
      */
@@ -112,6 +115,14 @@ export type ApplicationOut = {
      * Today
      */
     today: string;
+    /**
+     * Is Manual
+     */
+    is_manual: boolean;
+    /**
+     * Description
+     */
+    description: string | null;
 };
 
 /**
@@ -307,6 +318,45 @@ export type DocumentOut = {
 };
 
 /**
+ * ExternalJobIn
+ *
+ * A job found on another site. Give a ``title`` or a ``url`` (without a title it is
+ * "Job at <host>"). ``url`` must be an absolute http(s) link: it is stored so you can open it
+ * later and is never visited by the server. ``description`` (at most 4,000 characters) is
+ * kept private to you. ``deadline`` is not before 2000-01-01. Text is trimmed.
+ */
+export type ExternalJobIn = {
+    /**
+     * Url
+     */
+    url?: string | null;
+    /**
+     * Title
+     */
+    title?: string | null;
+    /**
+     * Company
+     */
+    company?: string | null;
+    /**
+     * Location
+     */
+    location?: string | null;
+    /**
+     * Job Type
+     */
+    job_type?: 'internship' | 'full_time' | null;
+    /**
+     * Deadline
+     */
+    deadline?: string | null;
+    /**
+     * Description
+     */
+    description?: string | null;
+};
+
+/**
  * Feed
  *
  * My Listings ranked by Match Score, best first (ties: newest ``posted_at``, then newest
@@ -387,7 +437,7 @@ export type FeedItem = {
     /**
      * Url
      */
-    url: string;
+    url: string | null;
     /**
      * Source
      */
@@ -478,7 +528,8 @@ export type ListingMatch = {
  *
  * One Listing. Every text field is scraped, untrusted text: render it as plain text.
  * ``url`` is the source page ("Apply"); show ``source_label`` ("via LinkedIn") and the
- * not-affiliated notice with it.
+ * not-affiliated notice with it. A job you added yourself has ``source`` ``manual`` ("Added
+ * by you") and may have no ``url`` (then there is no Apply link).
  */
 export type ListingOut = {
     /**
@@ -512,7 +563,7 @@ export type ListingOut = {
     /**
      * Url
      */
-    url: string;
+    url: string | null;
     /**
      * Source
      */
@@ -1251,7 +1302,7 @@ export type StatusChange = {
  * One Tracker row. ``deadline`` is the Listing's current (effective) deadline while it is
  * available to you, else the snapshot. ``in_pool`` equals ``listing_available``. ``score``
  * is your stored Match Score of the Listing (null when none is stored or the Listing is no
- * longer available).
+ * longer available). ``description`` is always null here: open the Application for it.
  */
 export type TrackerItemOut = {
     /**
@@ -1285,7 +1336,7 @@ export type TrackerItemOut = {
     /**
      * Url
      */
-    url: string;
+    url: string | null;
     /**
      * Deadline
      */
@@ -1314,6 +1365,14 @@ export type TrackerItemOut = {
      * Today
      */
     today: string;
+    /**
+     * Is Manual
+     */
+    is_manual: boolean;
+    /**
+     * Description
+     */
+    description: string | null;
     /**
      * In Pool
      */
@@ -2493,6 +2552,37 @@ export type SaveListingResponses = {
 };
 
 export type SaveListingResponse = SaveListingResponses[keyof SaveListingResponses];
+
+export type AddExternalJobData = {
+    body: ExternalJobIn;
+    path?: never;
+    query?: never;
+    url: '/api/v1/applications/manual';
+};
+
+export type AddExternalJobErrors = {
+    /**
+     * Not signed in
+     */
+    401: unknown;
+    /**
+     * No title and no link, an invalid link, text over its limit, a deadline before 2000-01-01, or a job that can't be added
+     */
+    422: unknown;
+};
+
+export type AddExternalJobResponses = {
+    /**
+     * You already added this link: the existing Application
+     */
+    200: ApplicationOut;
+    /**
+     * Successful Response
+     */
+    201: ApplicationOut;
+};
+
+export type AddExternalJobResponse = AddExternalJobResponses[keyof AddExternalJobResponses];
 
 export type ListUpcomingDeadlinesData = {
     body?: never;

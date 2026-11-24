@@ -1869,6 +1869,65 @@
         }
       }
     },
+    "/api/v1/applications/manual": {
+      "post": {
+        "tags": [
+          "tracker"
+        ],
+        "summary": "Add External Job",
+        "description": "Add a job you found on another site and track it (201): it is visible only to you,\nscored like any other Listing and saved as an Application in Saved. The link is stored so\nyou can open it later; it is never visited. Adding the same link again returns that\nApplication unchanged (200).",
+        "operationId": "addExternalJob",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExternalJobIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplicationOut"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "You already added this link: the existing Application",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplicationOut"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in",
+            "content": {
+              "application/problem+json": {}
+            }
+          },
+          "422": {
+            "description": "No title and no link, an invalid link, text over its limit, a deadline before 2000-01-01, or a job that can't be added",
+            "content": {
+              "application/problem+json": {}
+            }
+          }
+        },
+        "security": [
+          {
+            "SupabaseAccessToken": []
+          }
+        ]
+      }
+    },
     "/api/v1/applications/deadlines": {
       "get": {
         "tags": [
@@ -2471,7 +2530,14 @@
             "title": "Company"
           },
           "url": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Url"
           },
           "deadline": {
@@ -2535,6 +2601,21 @@
             "type": "string",
             "format": "date",
             "title": "Today"
+          },
+          "is_manual": {
+            "type": "boolean",
+            "title": "Is Manual"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
           }
         },
         "type": "object",
@@ -2553,10 +2634,12 @@
           "resume_id",
           "created_at",
           "updated_at",
-          "today"
+          "today",
+          "is_manual",
+          "description"
         ],
         "title": "ApplicationOut",
-        "description": "One Application. ``title``, ``company`` and ``url`` are the snapshot taken when the\nListing was saved (scraped, untrusted text: render it as plain text). ``deadline`` is the\nListing's current deadline while it is available to you, else the snapshot.\n``listing_available`` is false once the Listing is gone, expired or no longer visible to\nyou. ``allowed_next`` lists the Statuses it may move to now (empty when none). ``today``\nis your local date (Preferences time zone): the latest allowed ``applied_on``."
+        "description": "One Application. ``title``, ``company`` and ``url`` are the snapshot taken when the\nListing was saved (scraped, untrusted text: render it as plain text); ``url`` is null for\na job you added without a link. ``deadline`` is the Listing's current deadline while it is\navailable to you, else the snapshot. ``listing_available`` is false once the Listing is\ngone, expired or no longer visible to you. ``allowed_next`` lists the Statuses it may move\nto now (empty when none). ``today`` is your local date (Preferences time zone): the latest\nallowed ``applied_on``. ``is_manual`` is true for a job you added from another site\n(\"Added by you\"); ``description`` is the description you gave it (plain text), null\notherwise."
       },
       "ApplicationUpdate": {
         "properties": {
@@ -2858,6 +2941,100 @@
         "title": "DocumentOut",
         "description": "One stored Document. ``filename`` is untrusted text: render it as plain text."
       },
+      "ExternalJobIn": {
+        "properties": {
+          "url": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2248
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "company": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 400
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Company"
+          },
+          "location": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 400
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Location"
+          },
+          "job_type": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "internship",
+                  "full_time"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Type"
+          },
+          "deadline": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deadline"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 4200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          }
+        },
+        "type": "object",
+        "title": "ExternalJobIn",
+        "description": "A job found on another site. Give a ``title`` or a ``url`` (without a title it is\n\"Job at <host>\"). ``url`` must be an absolute http(s) link: it is stored so you can open it\nlater and is never visited by the server. ``description`` (at most 4,000 characters) is\nkept private to you. ``deadline`` is not before 2000-01-01. Text is trimmed."
+      },
       "Feed": {
         "properties": {
           "state": {
@@ -2968,7 +3145,14 @@
             "title": "Deadline"
           },
           "url": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Url"
           },
           "source": {
@@ -3172,7 +3356,14 @@
             "title": "Deadline"
           },
           "url": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Url"
           },
           "source": {
@@ -3212,7 +3403,7 @@
           "first_seen_at"
         ],
         "title": "ListingOut",
-        "description": "One Listing. Every text field is scraped, untrusted text: render it as plain text.\n``url`` is the source page (\"Apply\"); show ``source_label`` (\"via LinkedIn\") and the\nnot-affiliated notice with it."
+        "description": "One Listing. Every text field is scraped, untrusted text: render it as plain text.\n``url`` is the source page (\"Apply\"); show ``source_label`` (\"via LinkedIn\") and the\nnot-affiliated notice with it. A job you added yourself has ``source`` ``manual`` (\"Added\nby you\") and may have no ``url`` (then there is no Apply link)."
       },
       "ListingSearchResults": {
         "properties": {
@@ -4502,7 +4693,14 @@
             "title": "Company"
           },
           "url": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Url"
           },
           "deadline": {
@@ -4567,6 +4765,21 @@
             "format": "date",
             "title": "Today"
           },
+          "is_manual": {
+            "type": "boolean",
+            "title": "Is Manual"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
           "in_pool": {
             "type": "boolean",
             "title": "In Pool"
@@ -4600,11 +4813,13 @@
           "created_at",
           "updated_at",
           "today",
+          "is_manual",
+          "description",
           "in_pool",
           "score"
         ],
         "title": "TrackerItemOut",
-        "description": "One Tracker row. ``deadline`` is the Listing's current (effective) deadline while it is\navailable to you, else the snapshot. ``in_pool`` equals ``listing_available``. ``score``\nis your stored Match Score of the Listing (null when none is stored or the Listing is no\nlonger available)."
+        "description": "One Tracker row. ``deadline`` is the Listing's current (effective) deadline while it is\navailable to you, else the snapshot. ``in_pool`` equals ``listing_available``. ``score``\nis your stored Match Score of the Listing (null when none is stored or the Listing is no\nlonger available). ``description`` is always null here: open the Application for it."
       },
       "TrackerPageOut": {
         "properties": {

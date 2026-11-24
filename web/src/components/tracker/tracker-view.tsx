@@ -13,7 +13,7 @@ import {
 import { MatchScoreBadge } from "@/components/matching/score-breakdown-view";
 import { Button } from "@/components/ui/button";
 import { LOGIN_PATH } from "@/lib/auth-paths";
-import { formatDate } from "@/lib/listings";
+import { ADDED_BY_YOU, formatDate } from "@/lib/listings";
 import {
   type DateBy,
   type TrackerFilters,
@@ -339,6 +339,7 @@ function ApplicationRow({ item }: { item: TrackerItemOut }) {
         <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
           <StatusChip status={item.status} />
           {deadline ? <span>Apply by {deadline}</span> : null}
+          {item.is_manual ? <span data-testid="added-by-you">{ADDED_BY_YOU}</span> : null}
           {item.in_pool ? null : <span data-testid="not-in-pool">{NOT_IN_POOL_LABEL}</span>}
         </div>
       </div>
