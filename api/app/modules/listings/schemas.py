@@ -42,6 +42,14 @@ class ListingList(BaseModel):
     next_cursor: str | None
 
 
+class ListingSearchResults(BaseModel):
+    """Best match first. Pass ``next_offset`` as ``offset`` to get the next page (null = no
+    more; search shows the best matches, so offsets stop at 200)."""
+
+    items: list[ListingOut]
+    next_offset: int | None
+
+
 class ProviderUsageStatus(BaseModel):
     """Whether collection runs for the Student now. ``reason`` (when paused):
     ``key_invalid``, ``credit_exhausted``, ``not_permitted`` or ``account_blocked``;

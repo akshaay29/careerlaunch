@@ -111,6 +111,9 @@ class Settings(BaseSettings):
     # The free database quota and the percentage of it that raises ``listings.quota_alert``.
     db_quota_bytes: int = Field(default=500 * 1024 * 1024, ge=1)
     db_quota_alert_percent: int = Field(default=80, ge=1, le=100)
+    # Keyword search (Story 2.6): the least trigram word similarity (title + company) that still
+    # counts as a match when full-text search finds nothing, so a typo still matches.
+    search_trigram_threshold: float = Field(default=0.35, ge=0.1, le=0.9)
     # The owner's Apify token, used ONLY by scripts/seed_pool.py.
     seed_apify_token: SecretStr | None = None
 

@@ -1232,6 +1232,75 @@
         }
       }
     },
+    "/api/v1/listings/search": {
+      "get": {
+        "tags": [
+          "listings"
+        ],
+        "summary": "Search Listings",
+        "description": "Keyword search over the Listings you can see (the shared pool and your own private\nones), not expired, best match first. All words must match (as prefixes); close\nmisspellings still match. ``q`` needs 2 to 100 characters with letters or digits.",
+        "operationId": "searchListings",
+        "security": [
+          {
+            "SupabaseAccessToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "maxLength": 100,
+              "title": "Q"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 50,
+              "minimum": 1,
+              "default": 20,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListingSearchResults"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The query, limit or offset is invalid",
+            "content": {
+              "application/problem+json": {}
+            }
+          }
+        }
+      }
+    },
     "/api/v1/listings/{listing_id}": {
       "get": {
         "tags": [
@@ -1744,6 +1813,35 @@
         ],
         "title": "ListingOut",
         "description": "One Listing. Every text field is scraped, untrusted text: render it as plain text.\n``url`` is the source page (\"Apply\"); show ``source_label`` (\"via LinkedIn\") and the\nnot-affiliated notice with it."
+      },
+      "ListingSearchResults": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ListingOut"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "next_offset": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Offset"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "next_offset"
+        ],
+        "title": "ListingSearchResults",
+        "description": "Best match first. Pass ``next_offset`` as ``offset`` to get the next page (null = no\nmore; search shows the best matches, so offsets stop at 200)."
       },
       "ListingSkill": {
         "properties": {

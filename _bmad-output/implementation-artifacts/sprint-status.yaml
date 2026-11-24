@@ -52,8 +52,8 @@ development_status:
   2-2-add-my-apify-provider-key: done
   2-3-collect-linkedin-listings-on-a-schedule: done
   2-4-see-my-usage-set-spend-caps-and-pause-on-failure: done
-  2-5-expire-evict-and-take-down-listings: in-progress
-  2-6-search-listings-by-keyword: backlog
+  2-5-expire-evict-and-take-down-listings: done
+  2-6-search-listings-by-keyword: in-progress
   epic-2-retrospective: optional
 
   epic-3: backlog

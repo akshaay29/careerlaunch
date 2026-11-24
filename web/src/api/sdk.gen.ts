@@ -2,7 +2,7 @@
 
 import { type Client, type ClientMeta, formDataBodySerializer, type Options as Options2, type RequestResult, type TDataShape } from './client';
 import { client } from './client.gen';
-import type { ActivateResumeData, ActivateResumeErrors, ActivateResumeResponses, DeleteDocumentData, DeleteDocumentErrors, DeleteDocumentResponses, DeleteMeData, DeleteMeErrors, DeleteMeResponses, DeleteProviderKeyData, DeleteProviderKeyResponses, DeleteResumeData, DeleteResumeErrors, DeleteResumeResponses, EditSkillProfileData, EditSkillProfileErrors, EditSkillProfileResponses, GetAdminMeData, GetAdminMeResponses, GetDocumentDownloadData, GetDocumentDownloadErrors, GetDocumentDownloadResponses, GetHealthData, GetHealthResponses, GetListingData, GetListingErrors, GetListingResponses, GetMeData, GetMeResponses, GetPreferencesData, GetPreferencesResponses, GetProviderKeyData, GetProviderKeyResponses, GetProviderUsageData, GetProviderUsageResponses, GetResumeDownloadData, GetResumeDownloadErrors, GetResumeDownloadResponses, GetSkillProfileData, GetSkillProfileResponses, GetSpendCapsData, GetSpendCapsResponses, GrantConsentData, GrantConsentErrors, GrantConsentResponses, ListConsentsData, ListConsentsResponses, ListDegreesData, ListDegreesResponses, ListDocumentsData, ListDocumentsErrors, ListDocumentsResponses, ListListingsData, ListListingsErrors, ListListingsResponses, ListResumesData, ListResumesErrors, ListResumesResponses, PutProviderKeyData, PutProviderKeyErrors, PutProviderKeyResponses, PutSpendCapsData, PutSpendCapsErrors, PutSpendCapsResponses, ResetSkillProfileData, ResetSkillProfileResponses, RevokeConsentData, RevokeConsentErrors, RevokeConsentResponses, SavePreferencesData, SavePreferencesErrors, SavePreferencesResponses, SuggestSkillsData, SuggestSkillsErrors, SuggestSkillsResponses, UploadDocumentData, UploadDocumentErrors, UploadDocumentResponses, UploadResumeData, UploadResumeErrors, UploadResumeResponses } from './types.gen';
+import type { ActivateResumeData, ActivateResumeErrors, ActivateResumeResponses, DeleteDocumentData, DeleteDocumentErrors, DeleteDocumentResponses, DeleteMeData, DeleteMeErrors, DeleteMeResponses, DeleteProviderKeyData, DeleteProviderKeyResponses, DeleteResumeData, DeleteResumeErrors, DeleteResumeResponses, EditSkillProfileData, EditSkillProfileErrors, EditSkillProfileResponses, GetAdminMeData, GetAdminMeResponses, GetDocumentDownloadData, GetDocumentDownloadErrors, GetDocumentDownloadResponses, GetHealthData, GetHealthResponses, GetListingData, GetListingErrors, GetListingResponses, GetMeData, GetMeResponses, GetPreferencesData, GetPreferencesResponses, GetProviderKeyData, GetProviderKeyResponses, GetProviderUsageData, GetProviderUsageResponses, GetResumeDownloadData, GetResumeDownloadErrors, GetResumeDownloadResponses, GetSkillProfileData, GetSkillProfileResponses, GetSpendCapsData, GetSpendCapsResponses, GrantConsentData, GrantConsentErrors, GrantConsentResponses, ListConsentsData, ListConsentsResponses, ListDegreesData, ListDegreesResponses, ListDocumentsData, ListDocumentsErrors, ListDocumentsResponses, ListListingsData, ListListingsErrors, ListListingsResponses, ListResumesData, ListResumesErrors, ListResumesResponses, PutProviderKeyData, PutProviderKeyErrors, PutProviderKeyResponses, PutSpendCapsData, PutSpendCapsErrors, PutSpendCapsResponses, ResetSkillProfileData, ResetSkillProfileResponses, RevokeConsentData, RevokeConsentErrors, RevokeConsentResponses, SavePreferencesData, SavePreferencesErrors, SavePreferencesResponses, SearchListingsData, SearchListingsErrors, SearchListingsResponses, SuggestSkillsData, SuggestSkillsErrors, SuggestSkillsResponses, UploadDocumentData, UploadDocumentErrors, UploadDocumentResponses, UploadResumeData, UploadResumeErrors, UploadResumeResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -349,6 +349,19 @@ export const listDegrees = <ThrowOnError extends boolean = false>(options?: Opti
 export const listListings = <ThrowOnError extends boolean = false>(options?: Options<ListListingsData, ThrowOnError>): RequestResult<ListListingsResponses, ListListingsErrors, ThrowOnError> => (options?.client ?? client).get<ListListingsResponses, ListListingsErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/api/v1/listings',
+    ...options
+});
+
+/**
+ * Search Listings
+ *
+ * Keyword search over the Listings you can see (the shared pool and your own private
+ * ones), not expired, best match first. All words must match (as prefixes); close
+ * misspellings still match. ``q`` needs 2 to 100 characters with letters or digits.
+ */
+export const searchListings = <ThrowOnError extends boolean = false>(options: Options<SearchListingsData, ThrowOnError>): RequestResult<SearchListingsResponses, SearchListingsErrors, ThrowOnError> => (options.client ?? client).get<SearchListingsResponses, SearchListingsErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/v1/listings/search',
     ...options
 });
 

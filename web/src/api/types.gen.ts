@@ -282,6 +282,23 @@ export type ListingOut = {
 };
 
 /**
+ * ListingSearchResults
+ *
+ * Best match first. Pass ``next_offset`` as ``offset`` to get the next page (null = no
+ * more; search shows the best matches, so offsets stop at 200).
+ */
+export type ListingSearchResults = {
+    /**
+     * Items
+     */
+    items: Array<ListingOut>;
+    /**
+     * Next Offset
+     */
+    next_offset: number | null;
+};
+
+/**
  * ListingSkill
  *
  * A canonical skill extracted from the Listing.
@@ -1578,6 +1595,42 @@ export type ListListingsResponses = {
 };
 
 export type ListListingsResponse = ListListingsResponses[keyof ListListingsResponses];
+
+export type SearchListingsData = {
+    body?: never;
+    path?: never;
+    query: {
+        /**
+         * Q
+         */
+        q: string;
+        /**
+         * Limit
+         */
+        limit?: number;
+        /**
+         * Offset
+         */
+        offset?: number;
+    };
+    url: '/api/v1/listings/search';
+};
+
+export type SearchListingsErrors = {
+    /**
+     * The query, limit or offset is invalid
+     */
+    422: unknown;
+};
+
+export type SearchListingsResponses = {
+    /**
+     * Successful Response
+     */
+    200: ListingSearchResults;
+};
+
+export type SearchListingsResponse = SearchListingsResponses[keyof SearchListingsResponses];
 
 export type GetListingData = {
     body?: never;
