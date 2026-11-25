@@ -23,7 +23,7 @@ async def test_session_search_path_is_app(engine: AsyncEngine) -> None:
         assert (await conn.execute(text("SELECT current_schema()"))).scalar_one() == "app"
 
 
-HEAD = "0020_manual_listings"
+HEAD = "0021_retention"
 JOB_TABLES = {
     "job_outbox",
     "schedules",

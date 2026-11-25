@@ -682,3 +682,134 @@ def test_only_a_manual_draft_may_leave_out_the_url() -> None:
         ListingDraft(source="linkedin", source_job_id="job-1", title="Backend Intern")
     draft = ListingDraft(source="manual", source_job_id="m-1", title="Backend Intern")
     assert draft.url is None
+
+
+# --------------------------------------------------------------------------- the cap (Story 4.4)
+
+LIMIT_MESSAGE = "You've reached the limit of 200 added jobs. Delete some to add more."
+
+
+def _seed_manual(
+    db: ManualDb, owner: uuid.UUID, n: int, *, tracked: bool = True, prefix: str = "cap"
+) -> None:
+    """``n`` manual Listings for ``owner``, written straight to the table. ``tracked`` ones
+    are pinned (as an Application pins its Listing); the others are orphans."""
+    db.execute(
+        "INSERT INTO app.listings (id, source, source_job_id, url, title, company, "
+        "vocab_version, search_doc, visibility_owner_id, collected_by, pin_count) "
+        "SELECT gen_random_uuid(), 'manual', %s || '-' || %s || '-' || g, "
+        "'https://jobs.example.com/' || %s || '/' || g, 'Seeded Job', 'Example Labs', 'v1', "
+        "to_tsvector('english', 'x'), %s, %s, %s FROM generate_series(1, %s) AS g",
+        (prefix, str(owner), prefix, owner, owner, 1 if tracked else 0, n),
+    )
+
+
+def test_default_cap_is_200(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.core.config import Settings
+
+    monkeypatch.delenv("MANUAL_LISTINGS_MAX", raising=False)
+    assert Settings(_env_file=None).manual_listings_max == 200
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, manual_listings_max=0)
+
+
+async def test_the_201st_added_job_is_refused_but_a_repeat_link_is_not(
+    client: AsyncClient,
+    student: Student,
+    other_student: Student,
+    db: ManualDb,
+    drains: list[int],
+) -> None:
+    owner, headers = student
+    _seed_manual(db, owner, 199)
+    # The 200th is accepted.
+    first = await _add(client, headers, FULL)
+    assert first.status_code == 201, first.text
+    assert len(db.manual_rows(owner)) == 200
+
+    # The 201st is a 422 with the limit message, and nothing is written.
+    resp = await _add(client, headers, {"url": "https://jobs.example.com/new", "title": "New"})
+    assert resp.status_code == 422, resp.text
+    assert resp.headers["content-type"].startswith(PROBLEM)
+    assert resp.json()["errors"] == [{"loc": ["body"], "msg": LIMIT_MESSAGE}]
+    assert len(db.manual_rows(owner)) == 200
+    # Title only (no link to reuse) is refused too.
+    resp = await _add(client, headers, {"title": "Another"})
+    assert resp.status_code == 422
+
+    # Adding a link already added returns its Application unchanged (200).
+    again = await _add(client, headers, FULL)
+    assert again.status_code == 200, again.text
+    assert again.json()["id"] == first.json()["id"]
+
+    # The cap is per Student.
+    other, other_headers = other_student
+    assert (await _add(client, other_headers, FULL)).status_code == 201
+    assert len(db.manual_rows(other)) == 1
+
+
+async def test_deleting_one_makes_room(
+    client: AsyncClient, student: Student, db: ManualDb, drains: list[int]
+) -> None:
+    owner, headers = student
+    _seed_manual(db, owner, 199)
+    added = (await _add(client, headers, FULL)).json()
+    assert (await _add(client, headers, {"title": "Over"})).status_code == 422
+    before = len(db.manual_rows(owner))
+    deleted = await client.delete(f"{APPLICATIONS}/{added['id']}", headers=headers)
+    assert deleted.status_code == 204, deleted.text
+    assert len(db.manual_rows(owner)) == before - 1  # its manual Listing went with it
+    assert (await _add(client, headers, {"title": "Fits"})).status_code == 201
+
+
+async def test_orphan_manual_listings_do_not_count(
+    client: AsyncClient, student: Student, db: ManualDb, drains: list[int]
+) -> None:
+    owner, headers = student
+    _seed_manual(db, owner, 199)
+    _seed_manual(db, owner, 5, tracked=False, prefix="orphan")
+    resp = await _add(client, headers, {"title": "The 200th tracked"})
+    assert resp.status_code == 201, resp.text
+    assert (await _add(client, headers, {"title": "Over"})).status_code == 422
+
+
+async def test_at_the_cap_re_adding_an_orphans_link_succeeds(
+    client: AsyncClient, student: Student, db: ManualDb, drains: list[int]
+) -> None:
+    """A link whose manual Listing lost its Application is re-added even at the cap; the
+    next re-add returns that Application (the tracked Listing is found first)."""
+    owner, headers = student
+    _seed_manual(db, owner, 200)
+    _seed_manual(db, owner, 1, tracked=False, prefix="orphan")
+    link = {"url": "https://jobs.example.com/orphan/1", "title": "Orphan Job"}
+    first = await _add(client, headers, link)
+    assert first.status_code == 201, first.text
+    again = await _add(client, headers, link)
+    assert again.status_code == 200, again.text
+    assert again.json()["id"] == first.json()["id"]
+    assert (await _add(client, headers, {"title": "Over"})).status_code == 422
+
+
+async def test_a_smaller_configured_cap_is_named_in_the_message(
+    client: AsyncClient,
+    student: Student,
+    db: ManualDb,
+    drains: list[int],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.core.config import get_settings
+
+    monkeypatch.setenv("MANUAL_LISTINGS_MAX", "2")
+    get_settings.cache_clear()
+    try:
+        _, headers = student
+        assert (await _add(client, headers, {"title": "One"})).status_code == 201
+        assert (await _add(client, headers, {"title": "Two"})).status_code == 201
+        resp = await _add(client, headers, {"title": "Three"})
+        assert resp.status_code == 422
+        assert resp.json()["errors"][0]["msg"] == (
+            "You've reached the limit of 2 added jobs. Delete some to add more."
+        )
+    finally:
+        monkeypatch.delenv("MANUAL_LISTINGS_MAX")
+        get_settings.cache_clear()

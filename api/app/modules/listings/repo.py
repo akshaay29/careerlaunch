@@ -984,12 +984,26 @@ async def lock_manual_adds(session: AsyncSession, owner_id: uuid.UUID) -> None:
     )
 
 
+async def count_tracked_manual(session: AsyncSession, owner_id: uuid.UUID) -> int:
+    """How many of the owner's manual Listings (expired or not) have an Application. Only
+    the owner's own Application can pin a manual Listing (``tracker`` pins on save, unpins on
+    delete), so a pinned one is a tracked one; an orphan (``pin_count`` 0) never counts.
+    Read through the pin so ``listings`` never reads ``tracker``'s table (AD-2)."""
+    stmt = (
+        select(func.count())
+        .select_from(Listing)
+        .where(_manual_for(owner_id), Listing.pin_count > 0)
+    )
+    return int((await session.execute(stmt)).scalar_one())
+
+
 async def manual_urls(session: AsyncSession, owner_id: uuid.UUID) -> list[tuple[uuid.UUID, str]]:
-    """``(id, url)`` of the owner's own manual Listings that have a URL, oldest first."""
+    """``(id, url)`` of the owner's own manual Listings that have a URL: tracked (pinned)
+    ones first, then oldest first, so a link already tracked is found before an orphan."""
     stmt = (
         select(Listing.id, Listing.url)
         .where(_manual_for(owner_id), Listing.url.is_not(None))
-        .order_by(Listing.first_seen_at, Listing.id)
+        .order_by((Listing.pin_count > 0).desc(), Listing.first_seen_at, Listing.id)
     )
     return [(r.id, r.url) for r in (await session.execute(stmt)).all()]
 

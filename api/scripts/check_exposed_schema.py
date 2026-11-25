@@ -7,7 +7,11 @@ Exits 1 if:
   * any table in schema ``app`` does not have row level security enabled;
   * ``anon`` or ``authenticated`` hold any privilege on schema ``app`` or its objects
     (directly, via role membership, or via PUBLIC);
-  * the connected role is neither superuser nor BYPASSRLS (forced RLS would lock it out).
+  * the connected role is neither superuser nor BYPASSRLS (forced RLS would lock it out);
+  * a real read as ``anon`` or ``authenticated`` (``SET LOCAL ROLE``, then
+    ``SELECT 1 FROM <table> LIMIT 1``) of any table in schema ``app`` is not refused with a
+    permission error, or a read of a relation in ``public`` (or of a made-up one there)
+    succeeds. This stands in for an anon REST request per table: CI has no PostgREST.
 
 Usage: ``uv run python scripts/check_exposed_schema.py`` (reads DATABASE_URL via Settings).
 """
@@ -16,6 +20,7 @@ import sys
 from pathlib import Path
 
 import psycopg
+from psycopg import sql
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -26,6 +31,9 @@ APP_SCHEMA = "app"
 API_ROLES = ("anon", "authenticated")
 # Platform-managed functions Supabase installs in exposed schemas (owner supabase_admin).
 ALLOWED_EXPOSED_FUNCTIONS = {("graphql_public", "graphql")}
+# A relation name that never exists: reading it as an API role must still fail.
+PROBE_RELATION = "cl_role_probe_missing"
+PERMISSION_DENIED = "42501"
 
 _RELKIND = {
     "r": "table",
@@ -180,6 +188,57 @@ def find_violations(conn: psycopg.Connection) -> list[str]:
         ):
             violations.append(f"{role} has a grant on function {APP_SCHEMA}.{fn}")
 
+    violations.extend(role_read_violations(conn))
+    return violations
+
+
+def probe_read(conn: psycopg.Connection, role: str, schema: str, table: str) -> str:
+    """Read ``schema.table`` as ``role`` in a savepoint (rolled back, so the role and any
+    error end with it). Returns ``"refused"`` (permission denied, SQLSTATE 42501),
+    ``"read"`` (the query ran) or ``"error: <SQLSTATE>"`` (any other error)."""
+    query = sql.SQL("SELECT 1 FROM {}.{} LIMIT 1").format(
+        sql.Identifier(schema), sql.Identifier(table)
+    )
+    outcome = "read"
+    try:
+        with conn.transaction(force_rollback=True):
+            conn.execute(sql.SQL("SET LOCAL ROLE {}").format(sql.Identifier(role)))
+            conn.execute(query)
+    except psycopg.Error as exc:
+        outcome = "refused" if exc.sqlstate == PERMISSION_DENIED else f"error: {exc.sqlstate}"
+    return outcome
+
+
+def role_read_violations(conn: psycopg.Connection) -> list[str]:
+    """Read every relation in ``app`` (tables, views, materialized and foreign tables) as
+    ``anon`` and ``authenticated``: each read must be refused with a permission error
+    (42501); any other outcome is a violation naming it. Reads of relations in ``public``
+    (and of a made-up ``public`` relation) must fail too."""
+    violations: list[str] = []
+    relations_sql = """
+        SELECT n.nspname, c.relname FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = ANY(%s) AND c.relkind IN ('r','p','v','m','f')
+        ORDER BY 1, 2
+    """
+    app_relations = [r for (_, r) in conn.execute(relations_sql, ([APP_SCHEMA],))]
+    public_relations = list(conn.execute(relations_sql, (list(EXPOSED_SCHEMAS),)))
+    for role in API_ROLES:
+        # SET ROLE needs superuser or membership; without it nothing can be probed.
+        if probe_read(conn, role, "pg_catalog", "pg_class") != "read":
+            violations.append(
+                f"cannot SET ROLE {role} to probe reads (connect as a superuser or a member "
+                f"of {role})"
+            )
+            continue
+        for rel in app_relations:
+            outcome = probe_read(conn, role, APP_SCHEMA, rel)
+            if outcome != "refused":
+                violations.append(f"{role} reading {APP_SCHEMA}.{rel} was not refused ({outcome})")
+        for nsp, rel in [*public_relations, ("public", PROBE_RELATION)]:
+            outcome = probe_read(conn, role, nsp, rel)
+            if outcome == "read":
+                violations.append(f"{role} can read {nsp}.{rel}")
     return violations
 
 

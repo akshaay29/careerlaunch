@@ -66,6 +66,6 @@ development_status:
   epic-4: in-progress
   4-1-save-a-listing-and-track-its-status: done
   4-2-my-tracker-view: done
-  4-3-add-a-job-from-another-site: in-progress
-  4-4-launch-hardening: backlog
+  4-3-add-a-job-from-another-site: done
+  4-4-launch-hardening: in-progress
   epic-4-retrospective: optional

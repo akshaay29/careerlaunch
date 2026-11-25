@@ -4,7 +4,8 @@ Seeds about 30,000 active Listings with one ``generate_series`` insert (realisti
 companies, skills and description lexemes; about one in ten private to some Student; a few
 expired) and times :func:`app.modules.listings.service.search` itself, so the budget covers
 the query and the page of results, not HTTP. Each query is timed after a warm-up and the best
-of a few runs must be under the budget.
+of a few runs must be under the budget: 500 ms as written in CI (``CI=true``) or with
+``PERF_STRICT=1``, otherwise scaled by this machine's calibration (``tests/perf_budget.py``).
 """
 
 import time
@@ -17,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from app.modules.listings import service
 from tests.conftest import AccountFactory
 from tests.listing_fixtures import ListingDb, listing_db  # noqa: F401 (fixture)
+from tests.perf_budget import budget_for, calibrate
 
 pytestmark = pytest.mark.usefixtures("clean_jobs")
 
@@ -112,6 +114,7 @@ async def test_search_under_500_ms_at_30k_listings(
     actor = pool[0]
     cases = {name: (q, 20, 0, expects) for name, (q, expects) in QUERIES.items()}
     cases["deep page"] = (*DEEP_PAGE, True)
+    before = await calibrate(engine)
     async with AsyncSession(engine) as session:  # warm-up: connections, plans, caches
         for query, limit, offset, _ in cases.values():
             await service.search(session, actor, query=query, limit=limit, offset=offset)
@@ -122,5 +125,6 @@ async def test_search_under_500_ms_at_30k_listings(
         timings[name] = best
         assert (count > 0) == expects_results, f"{name}: {count} results"
     print({name: f"{secs * 1000:.0f} ms" for name, secs in timings.items()})
+    budget = await budget_for(engine, BUDGET_SECONDS, earlier=before)
     for name, secs in timings.items():
-        assert secs < BUDGET_SECONDS, f"{name} took {secs * 1000:.0f} ms (budget 500 ms)"
+        assert secs < budget.seconds, f"{name} took {secs * 1000:.0f} ms ({budget.describe()})"

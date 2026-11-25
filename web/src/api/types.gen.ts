@@ -2566,7 +2566,7 @@ export type AddExternalJobErrors = {
      */
     401: unknown;
     /**
-     * No title and no link, an invalid link, text over its limit, a deadline before 2000-01-01, or a job that can't be added
+     * No title and no link, an invalid link, text over its limit, a deadline before 2000-01-01, a job that can't be added, or the limit of added jobs reached
      */
     422: unknown;
 };

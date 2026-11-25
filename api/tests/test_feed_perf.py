@@ -6,7 +6,8 @@ Student, then times :func:`app.modules.matching.service.feed` itself: the first 
 page (followed through the cursor), the first page with "Show below my threshold", and the
 provisional path (a second Student with setup but no stored scores, scoring
 ``FEED_ON_REQUEST_CAP`` candidates). Each is timed after a warm-up; the best of 3 must be
-under the budget.
+under the budget: 2 s as written in CI (``CI=true``) or with ``PERF_STRICT=1``, otherwise
+scaled by this machine's calibration (``tests/perf_budget.py``).
 """
 
 import time
@@ -20,6 +21,7 @@ from app.core.config import get_settings
 from app.modules.matching import service
 from tests.conftest import AccountFactory
 from tests.match_fixtures import MatchDb
+from tests.perf_budget import budget_for, calibrate
 from tests.test_listing_search_perf import POOL_SIZE, RARE_WORD, SEED
 
 pytestmark = pytest.mark.usefixtures("clean_jobs")
@@ -104,6 +106,7 @@ async def test_feed_pages_under_2_s_at_30k_listings(
         cursor = page.next_cursor
 
     timings: dict[str, float] = {}
+    before = await calibrate(engine)
     best, count = await _best_of(engine, ready)
     timings["first page"], first_count = best, count
     assert first_count > 0
@@ -122,5 +125,6 @@ async def test_feed_pages_under_2_s_at_30k_listings(
     assert db.scores(fresh) == {}
 
     print({name: f"{secs * 1000:.0f} ms" for name, secs in timings.items()})
+    budget = await budget_for(engine, BUDGET_SECONDS, earlier=before)
     for name, secs in timings.items():
-        assert secs < BUDGET_SECONDS, f"{name} took {secs * 1000:.0f} ms (budget 2 s)"
+        assert secs < budget.seconds, f"{name} took {secs * 1000:.0f} ms ({budget.describe()})"
