@@ -1658,6 +1658,7 @@ MIN_MANUAL_DEADLINE = date(2000, 1, 1)
 MANUAL_BLOCKED = "This job can't be added."
 TITLE_REQUIRED = "Enter a title or a link to the job."
 INVALID_LINK = "Enter a full link starting with http:// or https://."
+MANUAL_LIMIT = "You've reached the limit of {limit} added jobs. Delete some to add more."
 DERIVED_TITLE_PREFIX = "Job at "
 
 # ListingDraft field -> request body field.
@@ -1807,6 +1808,10 @@ async def create_manual_listing(
     nothing changes; the caller passes False to add a new one anyway (its old Listing has no
     Application).
 
+    A Student tracks at most ``MANUAL_LISTINGS_MAX`` manual Listings (those with an
+    Application; orphans don't count): one more is a 422 ("You've reached the limit of ...
+    added jobs"). Re-adding a link already added is never blocked.
+
     Otherwise the draft goes through :func:`ingest_draft` like any other (skills and
     ``search_doc`` from the title and description, the takedown check, ``ListingsIngested``)
     but never into the pool (``contributes_to_pool=False``: visible to the owner only), and
@@ -1830,6 +1835,12 @@ async def create_manual_listing(
         existing = await _existing_manual(session, owner_id, draft.url)
         if existing is not None:
             return existing, True
+    # The cap counts only manual Listings that have an Application (orphans never count)
+    # and never blocks re-adding a link already added: neither the reuse above nor its
+    # replacement of an orphan (``reuse_existing`` False) is checked.
+    limit = get_settings().manual_listings_max
+    if reuse_existing and await repo.count_tracked_manual(session, owner_id) >= limit:
+        raise InvalidInputError(["body"], MANUAL_LIMIT.format(limit=limit))
     stored = await ingest_draft(session, draft, collected_by=owner_id, contributes_to_pool=False)
     if stored is None:
         raise blocked

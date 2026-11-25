@@ -547,6 +547,29 @@ not the whole pool). `/listings?q=...` runs the same search in the web app.
   the same window. A deleted Student's events keep their counts with `owner_id` NULL, so they
   drop out of the distinct count.
 
+## Retention and launch hardening (AD-17, NFR-7, NFR-8, Story 4.4)
+
+- **Retention:** a global daily `schedules` row (migration `0021_retention`, about 03:30 UTC)
+  runs `core.purge_history`. It deletes finished Procrastinate jobs (`succeeded`, `failed`,
+  `cancelled`, `aborted`) whose last event is older than `JOB_HISTORY_RETENTION_DAYS` (7) with
+  their events, `job_outbox` rows older than that, and `ops_events` older than
+  `OPS_EVENTS_RETENTION_DAYS` (90), in batches of at most 1,000 rows per statement. It never
+  deletes `todo` / `doing` jobs, `admin_audit` or Student data, and records one counts-only
+  `core.purge_history` ops event per run.
+- **Isolation** (`tests/test_isolation.py`): every route with a path parameter must have a
+  registry entry (Student B gets 404 for Student A's id) or a reasoned exemption, and every
+  admin route returns 403 to a Student. A new id route without an entry fails CI, naming it.
+- **Anon-key lockout** (`tests/test_db_roles.py` and the exposed-schema check): a real read of
+  every `app` table as `anon` and `authenticated` must be refused with a permission error.
+- **Performance:** the search (500 ms) and feed (2 s) budgets are strict in CI (`CI=true`) or
+  with `PERF_STRICT=1`; elsewhere they scale with a calibration query (at most 4x) and the
+  timings are printed.
+- **Manual Listings:** at most `MANUAL_LISTINGS_MAX` (200) per Student; one more is a 422.
+  Re-adding a link already added is never blocked.
+
+Before opening to real Students, work through the [go-live checklist](docs/go-live.md)
+(`api/scripts/go_live_check.py`).
+
 ## CI (`.github/workflows/ci.yml`)
 
 On every push and PR: Postgres 17 service + Supabase roles SQL → `alembic upgrade head` →

@@ -51,7 +51,8 @@ DRAIN_LOCK_KEY = 0x434C5F445241494E  # "CL_DRAIN"
 # Every module's tasks.py is imported by the worker so it knows every task name. These are
 # strings, so core still never imports app.modules (import-linter kernel contract).
 TASK_MODULES = [
-    f"app.modules.{m}.tasks" for m in ("accounts", "profile", "listings", "matching", "tracker")
+    "app.core.retention",
+    *(f"app.modules.{m}.tasks" for m in ("accounts", "profile", "listings", "matching", "tracker")),
 ]
 
 _TASK_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$")

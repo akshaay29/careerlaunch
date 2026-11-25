@@ -121,6 +121,14 @@ class Settings(BaseSettings):
     # The ranked feed (Story 3.3): before a Student has stored scores, at most this many of their
     # candidates are scored on request (never stored) so the first feed is ranked at once.
     feed_on_request_cap: int = Field(default=60, ge=1, le=500)
+    # Manual Listings (Story 4.4): the most jobs from other sites one Student may hold; one
+    # more is a 422. Re-adding a link already added is never blocked.
+    manual_listings_max: int = Field(default=200, ge=1)
+    # Retention (Story 4.4, AD-17): the daily ``core.purge_history`` job deletes finished
+    # Procrastinate jobs (and their events) and leaked outbox rows older than
+    # JOB_HISTORY_RETENTION_DAYS, and ``ops_events`` older than OPS_EVENTS_RETENTION_DAYS.
+    job_history_retention_days: int = Field(default=7, ge=1)
+    ops_events_retention_days: int = Field(default=90, ge=1)
     # The owner's Apify token, used ONLY by scripts/seed_pool.py.
     seed_apify_token: SecretStr | None = None
 

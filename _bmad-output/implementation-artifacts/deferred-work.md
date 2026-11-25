@@ -141,3 +141,7 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-4-3-add-a-job-from-another-site.md`
   summary: Cap or rate-limit manual job adds per Student (Story 4.4), store a canonical manual URL with a partial unique index (owner, url) for DB-enforced de-duplication, and add a concurrent-add test and a 0020 downgrade test seeded with NULL-URL rows.
   evidence: Each add runs ingest and a priority recompute with no limit; de-duplication relies on an advisory lock and a Python scan.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-4-4-launch-hardening.md`
+  summary: Confirm (EXPLAIN on production-sized data) the retention jobs purge plan and add an index on `procrastinate_events (job_id, at)` if needed; add a web component test for the manual-add cap message.
+  evidence: The purge re-scans finished jobs per batch; the cap's 422 is only API-tested.

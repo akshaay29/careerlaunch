@@ -85,7 +85,8 @@ async def save_listing(
         **_UNAUTHORIZED,
         422: {
             "description": "No title and no link, an invalid link, text over its limit, a "
-            "deadline before 2000-01-01, or a job that can't be added",
+            "deadline before 2000-01-01, a job that can't be added, or the limit of added "
+            "jobs reached",
             **_PROBLEM,
         },
     },
